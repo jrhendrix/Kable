@@ -3,6 +3,7 @@ A tool for sequence, annotation, and methylome comparison between multiple bacte
 
 ## Introduction
 Various bioinformatics tools exist to annotate gene sequences in the bacterial genome and to find variants; however, linking variants to specific genes or identifying changes to gene boundaries require additional steps. Further, there are currently no tools to compare the location of base modifications between genomes. 
+
 To address the shortcomings in current analysis tools, I present Kable. Kable utilizes a colored de Bruijn Graph to align multiple genomic sequences while simultaneously tracking associated feature information. Kable can handle gene annotations, base modification or any other data that can be described in a GFF or VCF format, including potential assembly errors identified by [al2var](https://github.com/jrhendrix/al2var). Kable provides three key features to the user. First, the user can search for a specific sequence or find a segment between two sequences and Kable will return any and all annotation data occurring within those sequences and display their exact locations in an alignment file. Second, Kable can identify variants between any number of genomes, outputting the locations of such variants to a VCF and displaying overlaying annotations in an alignment file. Finally, Kable offers the first method to directly compare the location of base modifications and record differences in the methylome to a specialized VCF file. 
 
 ## Getting Started

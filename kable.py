@@ -15,8 +15,8 @@ If k-mer size is too small, search might go in circles
 import Bio
 import argparse
 import os
-import gfapy
-import graphviz #conda install python-graphviz pydot
+#import gfapy
+#import graphviz #conda install python-graphviz pydot
 import logging
 import pandas as pd # conda install pandas
 import subprocess
@@ -761,7 +761,159 @@ def initialize():
     colors = set()
 
     return Graph(nodes, edges, starts, info, genomes, colors)
+def find_starts(nodes, edges):
+    not_starts = set()
 
+    # RECORD NODES WITH AN IN-DEGREE
+    for edge in edges:
+        e2 = edge[1]
+        not_starts.add(e2)
+
+    # FIND NODES WITH 0 IN-DEGREES
+    starts = list(nodes - not_starts)
+
+    return starts
+def read_graph(args):
+    
+    LOG.info('READING GRAPH...')
+    # READ GRAPH
+    try:
+        ifile = File(args.input_graph)
+    except:
+        print('ERROR: Could not open graph file. Exit.')
+        LOG.error('ERROR: Could not open graph file. Exit.')
+        exit()
+    if not checkEx(ifile.extension, 'graph'):
+        print('ERROR: Graph file must be of type .gfa. Exit.')
+        LOG.error('ERROR: Graph file must be of type .gfa. Exit.')
+        exit()
+
+    nodes = set()
+    edges = []
+
+    f1 = open(ifile.path, 'r')
+    lookup = {}
+    notfound = []
+    counter = 0
+    for l in f1:
+        counter = counter + 1
+        if counter % 1000000 == 0:
+            LOG.info(f'\t... line: {str(counter)}')
+        line = l.strip().split('\t')
+
+        # HANDLE NODES (segments)
+        if line[0] == 'S':
+            name = line[1]
+            seq = line[2]
+            lookup[name] = seq
+
+            # ADD NODE TO GRAPH
+            nodes.add(seq)
+
+        elif line[0] == 'L':
+            # Currently assuming that everything is positive strand
+            # Also assuming that all have 1M overlap
+            name1 = line[1]
+            name2 = line[3]
+
+            # LOOKUP SEQUENCE FOR NODE WITH NAME
+            if name1 in lookup and name2 in lookup:
+                seq1 = lookup[name1]
+                seq2 = lookup[name2]
+                # Create edge
+                edge = (seq1, seq2)
+                edges.append(edge)
+            else:
+                pair = [name1, name2]
+                notfound.append(pair)
+
+    # HANDLE NOT FOUND
+    ## In these edge pairs, the edge was found before the node. Attempt to resolve
+    ## Do not save an edge node that does not have a sequence
+    for pair in notfound:
+        name1 = pair[0]
+        name2 = pair[1]
+        if name1 in lookup and name2 in lookup:
+            seq1 = lookup[name1]
+            seq2 = lookup[name2]
+            # Create edge
+            edge = (seq1, seq2)
+            edges.append(edge)
+        else:
+            # TODO: Report failed reads to log?
+            continue
+
+
+    # IDENTIFY NODES WITH 0 IN-DEGREES
+    starts = find_starts(nodes, edges)
+
+    f1.close()
+
+    return nodes, edges, starts
+def read_feats(args, include_feats = True):
+    
+    LOG.info('READING FEATURES...')
+    try:
+        ifile = File(args.input_features)
+    except:
+        print('ERROR: Could not open features file. Exit.')
+        LOG.error('ERROR: Could not open features file. Exit.')
+        exit()
+
+    info = {}
+    cDict = {}
+    genomes = set()
+    colors = set()
+    f = open(ifile.path, 'r')
+    counter = 0
+    #print('READING FEATS')
+    for l in f:
+        counter = counter + 1
+        if counter % 1000000 == 0:
+            LOG.info(f'\t... line: {str(counter)}')
+        if l.startswith('#'):
+            continue
+        line = l.strip().split('\t')
+
+        kmer = line[0]
+        genome = line[1]
+        contig = line[2]
+        color = ':'.join((genome, contig))
+        #print(color)
+        pos = int(line[3])
+
+        # CREATE INFORMATION CARD
+        kcard = Card(kmer, genome, contig, color, pos)
+        if len(line) > 4 and include_feats:
+            feats = line[4].split(';')
+            # CREATE FEATURE
+            for feat in feats:
+                entry = feat.split(',')
+                newFeat = Feature(entry[3], entry[2], entry[1], entry[0], entry[4], color, pos, entry[5])
+                kcard.add_feature(newFeat)
+
+        # ADD CARD TO DICTIONARY
+        if kmer not in info:
+            info[kmer] = []
+        info[kmer].append(kcard)
+
+        # RECORD COLOR
+        genomes.add(genome)
+        colors.add(color)
+
+        # COUNT KMER PRESENCE
+        if kmer not in cDict:
+            cDict[kmer] = {}
+        if genome not in cDict[kmer]:
+            cDict[kmer][genome] = 0
+        cDict[kmer][genome] = cDict[kmer][genome] + 1
+    f.close()
+
+    list_genomes = list(genomes)
+    list_genomes.sort()
+    list_colors = list(colors)
+    list_colors.sort()
+    return(info, cDict, list_genomes, list_colors)
 
 ############################################################
 ## Helper Functions for Tasks
@@ -858,6 +1010,8 @@ def build(args, command):
     else:
         k_size = args.kmer_size
 
+    LOG.info(f'K-mer size = {k_size}')
+
     # INITIALIZE GRAPH
     G = initialize()
 
@@ -907,6 +1061,7 @@ def build(args, command):
             # DIVIDE SEQUENCE INTO KMERS - and add annotations
             LOG.info(f'... ... Finding k-mers...')
             kmers, color = chop(seq[key], annotations, genome, key, strand, k_size, cyclic=False)
+            #print(len(kmers))
             # ADD KMERS TO GRAPH
             LOG.info(f'... ... ... Adding k-mers to graph...')
             if strand == 'fwd':
@@ -921,8 +1076,6 @@ def build(args, command):
     # SAVE GRAPH AND FEATURES
     save_gfa(args, G.edges)         # Save graph
     save_features(args, G.cards)    # Save feature data
-
-
 def add(args, command):
 
     # CONFIGURE
@@ -933,7 +1086,10 @@ def add(args, command):
 
     # GET GRAPH
     nodes, edges, starts = read_graph(args)                 # Read graph file
-    info, cDict, list_genomes, list_colors = read_feats(args)       # Read features file
+    if args.exclude_features:
+        info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
+    else:
+        info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
     G = Graph(nodes, edges, starts, info, list_genomes, list_colors)    # Create graph
 
     # DEDUCE K-MER SIZE
@@ -948,64 +1104,123 @@ def add(args, command):
 
     # ADD SEQUENCES AND META DATA TO GRAPH
     LOG.info('ADD SEQUENCES AND METADATA TO GRAPH')
-    list_samples = []   # Track samples in graph
     for entry in samples:
         # COLLECT DATA FOR SAMPLES - sequence, strand, annotation
         annotations = []
         samp = entry[0]
         strand = entry[1]
+
         for f in samp:
-            # COLLECT DATA FOR SAMPLES - sequence, annotation
-            annotations = []
-            for f in samp:
-                # INPUT FASTA FILE
-                if checkEx(f.extension, 'fasta'):       # Sequence file
-                    seq, name = get_sequence(samp[0].path)
-                    list_samples.append(name)
-                    LOG.info(f'... Processing {name}')
-                
-                # INPUT GFF ANNOTATION RECORDS
-                if checkEx(f.extension, 'gff'):     # Annotation file
-                    LOG.info('... Reading annotation files')
-                    anno = read_gff(f.path)
-                    annotations.append(anno)
-                    LOG.info('... Done.')
-                    #print('ANNO: ', anno)
-                
-                # INPUT VCF ANNOTATION RECORDS
-                if checkEx(f.extension, 'vcf'):     # variant file
-                    LOG.info(f'... Reading variant file: {f.filename}')
-                    var = read_vcf(f.path)
-                    annotations.append(var)
-                    LOG.info('... Done.')
+            # INPUT FAST FILE
+            if checkEx(f.extension, 'fasta'):       # Sequence file
+                seq, genome = get_sequence(samp[0].path)
+                LOG.info(f'. GENOME FILE: {genome}')
+            
+            # INPUT GFF ANNOTATION RECORDS
+            if checkEx(f.extension, 'gff'):     # Annotation file
+                LOG.info(f'... Reading annotation file: {f.filename}')
+                anno = read_gff(f.path)
+                annotations.append(anno)
+                LOG.info('... Done.')
 
-            sanno = sort_dictionary(annotations)
+            # INPUT VCF ANNOTATION RECORDS
+            if checkEx(f.extension, 'vcf'):     # variant file
+                LOG.info(f'... Reading variant file: {f.filename}')
+                var = read_vcf(f.path)
+                annotations.append(var)
+                LOG.info('... Done.')
 
-            # ADD CONTIGS TO GRAPH
-            LOG.info('... Adding k-mers to graph')
-            contigs = []
-            for key in seq:
-                contigs.append(key) # Add contig to list
-                if key in sanno:
-                    annotations = sanno[key]
-                else:
-                    annotations = []
 
-                # DIVIDE SEQUENCE INTO KMERS - and add annotations
-                LOG.info(f'... ... Finding k-mers...')
-                kmers, color = chop(seq[key], annotations, name, key, k_size, cyclic=False)
-                # ADD KMERS TO GRAPH
-                LOG.info(f'... ... ... Adding k-mers to graph...')
-                if strand == 'fwd':
-                    G = add_to_graph(G, kmers)
-                else:
-                    G = add_to_graph_revC(G, kmers)
-                G.add_color(color)
+        # SORT DICTIONARY - order annotations by start position
+        sanno = sort_dictionary(annotations)
+
+        # ADD CONTIGS TO GRAPH
+        LOG.info('... Adding k-mers to graph')
+        list_colors = []
+        contigs = []
+        for key in seq:
+            contigs.append(key) # Add contig to list
+            if key in sanno:
+                annotations = sanno[key]
+            else:
+                annotations = []
+
+            # DIVIDE SEQUENCE INTO KMERS - and add annotations
+            LOG.info(f'... ... Finding k-mers...')
+            kmers, color = chop(seq[key], annotations, genome, key, strand, k_size, cyclic=False)
+            #print(len(kmers))
+            # ADD KMERS TO GRAPH
+            LOG.info(f'... ... ... Adding k-mers to graph...')
+            if strand == 'fwd':
+                G = add_to_graph(G, kmers)
+            else:
+                G = add_to_graph_revC(G, kmers)
+            G.add_color(color)
+            list_colors.append(color)
+    #list_samples = []   # Track samples in graph
+    
 
     LOG.info('DONE BUILDING GRAPH')
     # SAVE GRAPH AND FEATURES
     save_gfa(args, G.edges)         # Save graph
     save_features(args, G.cards)    # Save feature data
+
+
+def find_vars(args, command):
+
+    # CONFIGURE
+    configure(args, 'find_vars', command)
+    LOG.info('USING EXISTING OBJECTS:')
+    LOG.info(f'\tGraph: {args.input_graph}')
+    LOG.info(f'\tFeatures: {args.input_features}')
+
+    # GET GRAPH
+    nodes, edges, starts = read_graph(args)     # Read graph file
+    if args.exclude_features:
+        print('exclude')
+        info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
+    else:
+        info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
+    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)# Create graph
+
+    # DEDUCE K-MER SIZE
+    k_size = len(G.edges[0][0])+1
+
+    # FIND GRAPH STARTING POINTS
+    starts = list(G.starts)
+    limit = args.max_depth
+
+    RG = remove_exact(args, G, list_colors, cDict)
+
+    # SAVE INTERMEDIATE GRAPH AND FEATURES
+    if args.write_intermediates:
+        save_gfa(args, RG.edges, 'unique')          # Save graph
+        save_features(args, RG.cards, 'unique')     # Save feature data
+
+    # FIND PATHS THROUGH GRAPH
+    paths = get_paths_inexact(RG, args.reverse_complement, args.num_snps)
+
+    # COMPARE SEQUENCES AND FEATURES
+    LOG.info(f'COMPARING VARIANT SEQUENCES...')
+    alignments = get_alignment(RG, paths, k_size, list_colors, args.include_mods)
+    variants = get_vars(args, list_colors, alignments, 'snps')
+
+    # GENERATE EXPORTS
+    job = 'snp_vars'
+    LOG.info(f'WRITING OUTPUT for {job}....')
+    export_vcf(args, list_colors, variants, '', job)            # variants
+    export_alignments(args, list_colors, alignments, job)       # pseudo alignment
+    
+    # limited meaning for var search
+    export_sum_table(args, alignments, list_colors, job)
+
+    # Does not have much meaning for var search
+    #export_mod_table(args, list_colors, alignments, job)   # table of base modifications
+
+
+
+
+
 
 def query(args, command):
     ''' Finds all instances of given sequence
@@ -1144,58 +1359,6 @@ def mod_search(args, command):
     export_vcf(args, list_colors, variants, '.m', job)              # variants
 
 
-
-def find_vars(args, command):
-
-    #print('not currently opperational')
-
-    # CONFIGURE
-    configure(args, 'find_vars', command)
-    LOG.info('USING EXISTING OBJECTS:')
-    LOG.info(f'\tGraph: {args.input_graph}')
-    LOG.info(f'\tFeatures: {args.input_features}')
-
-    # GET GRAPH
-    nodes, edges, starts = read_graph(args)     # Read graph file
-    if args.exclude_features:
-        info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
-    else:
-        info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
-    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)# Create graph
-
-    # DEDUCE K-MER SIZE
-    k_size = len(G.edges[0][0])+1
-
-    # FIND GRAPH STARTING POINTS
-    starts = list(G.starts)
-    limit = args.max_depth
-
-    RG = remove_exact(args, G, list_colors, cDict)
-
-    # SAVE INTERMEDIATE GRAPH AND FEATURES
-    if args.write_intermediates:
-        save_gfa(args, RG.edges, 'unique')          # Save graph
-        save_features(args, RG.cards, 'unique')     # Save feature data
-
-    # FIND PATHS THROUGH GRAPH
-    paths = get_paths_inexact(RG, args.reverse_complement, args.num_snps)
-
-    # COMPARE SEQUENCES AND FEATURES
-    LOG.info(f'COMPARING VARIANT SEQUENCES...')
-    alignments = get_alignment(RG, paths, k_size, list_colors, args.include_mods)
-    variants = get_vars(args, list_colors, alignments, 'snps')
-
-    # GENERATE EXPORTS
-    job = 'snp_vars'
-    LOG.info(f'WRITING OUTPUT for {job}....')
-    export_vcf(args, list_colors, variants, '', job)            # variants
-    export_alignments(args, list_colors, alignments, job)       # pseudo alignment
-    
-    # limited meaning for var search
-    export_sum_table(args, alignments, list_colors, job)
-
-    # Does not have much meaning for var search
-    #export_mod_table(args, list_colors, alignments, job)   # table of base modifications
 
 def bubble_query(args, command):
     print('not currently opperational')
@@ -1444,6 +1607,7 @@ if __name__== "__main__":
     #parser_build.add_argument('-w', '--write_var_graph', default=False, help='Save graph and features after filtering', action='store_true')
 
     # PARSER : ADD
+    parser_add.add_argument('-e', '--exclude_features', default=False, help='Annotation data will not be read from feature file', action='store_true')  
     parser_add.add_argument('-f', '--input_features', help='File containing feature data')
     parser_add.add_argument('-g', '--input_graph', help='File containing graph')
     parser_add.add_argument('-m', '--manifest', help='File specifying location of sequences and corresponding metadata')

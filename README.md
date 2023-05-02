@@ -33,6 +33,14 @@ python kable.py build -m manifest.tsv -k 33
 
 
 ### Add to graph
+The add module requires a pre-existing kable-generated graph and feature file along with a new manifest file. The manifest should follow the same formatting pattern used by the build module. 
+
+The add module will imoprt the graph, determine the k-mer size by the existing node length, then add any new samples included in the manifest file. New graph and feature files will be exported and labeled with 'add' in the savename.
+
+```
+# Basic usage
+python kable.py add -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -m new_manifest.tsv
+```
 
 ### Find sequence variants
 

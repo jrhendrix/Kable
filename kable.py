@@ -352,6 +352,9 @@ def read_gff(ifile):
         l = '\t'.join(l.split())    # Remove whitespace
         line = l.split('\t')
 
+        if len(line) < 9:
+            continue
+
         # Remove duplicate annotations from Prokka output
         if line[1] == 'Prodigal:2.6':
             continue
@@ -914,6 +917,728 @@ def read_feats(args, include_feats = True):
     list_colors = list(colors)
     list_colors.sort()
     return(info, cDict, list_genomes, list_colors)
+def remove_exact(args, G, list_colors, cDict):
+
+    LOG.info('FINDING UNIQUE SEQUENCES')
+    
+    list_genomes = G.genomes #get_genome_list(list_colors)
+    ng = len(list_genomes)
+    deck = []
+    count = 0
+    for kmer in cDict:
+        if not args.reverse_complement:
+            # ONLY CONSIDER SEQUENCE AS IS
+            if len(cDict[kmer]) != ng:
+                for card in G.cards[kmer]:
+                    deck.append(card)
+        else:
+            # CONSIDER REVERSE COMPLEMENT
+            rvc = get_reverse_complement(kmer)
+            if rvc in G.cards:
+                foundIn = set()
+                for key in cDict[kmer]:
+                    foundIn.add(key)
+                for key in cDict[rvc]:
+                    foundIn.add(key)
+                if len(foundIn) < ng:
+                    for card in G.cards[kmer]:
+                        deck.append(card)
+                    for card in G.cards[rvc]:
+                        deck.append(card)
+            elif len(cDict[kmer]) != ng:
+                for card in G.cards[kmer]:
+                    deck.append(card)
+        
+    # CREATE SUBGRAPH
+    RG = initialize()
+    RG = add_to_graph(RG, deck)
+    return(RG)
+def dfs(visited, graph, node, d, limit, ps, path=[]):
+
+    path.append(node)
+    visited.add(node)
+
+    # IF MAX DEPTH REACHED -> go back up
+    d = d+1
+    if d > limit:
+        entry = list(path)
+        ps.append(entry)
+
+        path.remove(node)
+        return ps, path, visited
+
+    if len(graph[node]) == 0:
+        entry = list(path)
+        ps.append(entry)
+
+        path.remove(node)
+        return ps, path, visited
+
+    # ITERATE OVER ALL NEIGHBORS
+    for neighbor in graph[node]:
+        if neighbor not in path:
+            ps, path, visited = dfs(visited, graph, neighbor, d, limit, ps, path)
+
+    path.remove(node) # Remove node from growing path
+
+    return ps, path, visited
+def condense_path(path):
+
+    e1 = path[0]
+    newPath = []
+    for i in range(1, len(path)):
+        newNode = e1 + path[i][-1]
+        newPath.append(newNode)
+        e1 = path[i]
+
+    return newPath
+
+
+############################################################
+## Helper Functions to search Graph
+def map(edges):
+    '''
+        Inputs an array of edges (node pairs)
+        Outputs a dictionary of output nodes for each node
+    '''
+    node_edge_map = {}
+    for e in edges:
+        m = e[0]
+        n = e[1]
+        if m not in node_edge_map:
+            node_edge_map[m] = set() # no duplicates
+        node_edge_map[m].add(n)
+
+        # ensure that sinks in subgraphs get included
+        if n not in node_edge_map:
+            node_edge_map[n] = set()
+    return node_edge_map
+def find_mod(deck):
+    for card in deck:
+        for feat in card.features:
+            if feat.category == 'mod':
+                return True
+    return False
+def has_path(G, path, color):
+
+    pathFound = True
+    for kmer in path:
+        pathFound = False
+        for card in G.cards[kmer]:
+            if card.color == color:
+                pathFound = True
+        if pathFound == False:
+            return False
+    if pathFound:
+        return True
+    else:
+        return False
+
+def get_paths(G, starts, get_rc):
+
+    # GET MAX RECURSION DEPTH
+    limit = args.max_depth
+    # CONVERT GRAPH TO DICTIONARY
+    m = map(G.edges)
+
+    # FIND PATHS FROM EACH START SEQUENCE
+    paths = []
+    while len(starts) > 0:
+        start = starts[0]
+        path_set = []
+        # GET ALL PATHS FROM THIS STARTING POINT
+        visited = set()
+        p = []
+        path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
+        starts.remove(start)
+        
+        # INSERT FUNCTIONALITY
+        k_size = len(path_set[0][0])
+        new_sets = []
+        for path in path_set:
+            n = 1
+            while True:
+                last_kmer = path[-n]
+                if len(last_kmer) < k_size:
+                    n = n + 1
+                else:
+                    break
+            if get_rc:
+                krc = get_reverse_complement(last_kmer)
+                if krc in G.nodes:
+                    new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
+                    for n in new_set:
+                        new_sets.append(n)
+                    if krc in starts:
+                        starts.remove(krc)
+                else:
+                    continue
+            
+        if get_rc:
+            for n in new_sets:
+                path_set.append(n)
+        
+        cpath_set = []
+        # CONDENSE PATH TO PROPER K-MER LENGTH
+        for path in path_set:
+            cpath_set.append(condense_path(path))
+        paths.append(cpath_set)
+
+    return paths
+def get_paths_inexact(G, get_rc, nsnps):
+    LOG.info('FIND PATHS THROUGH GRAPH...')
+    
+    # GET LIST OF START SEQUENCES
+    starts = list(G.starts)
+    # GET MAX RECURSION DEPTH
+    limit = args.max_depth
+    # CONVERT GRAPH TO DICTIONARY
+    m = map(G.edges)
+
+    # FIND PATHS FROM EACH START SEQUENCE
+    paths = []
+    newStart = None
+    path_set = []
+    visited = set()
+    p = []
+    while True:
+        if newStart is not None:
+            start = newStart
+        else:
+            if len(starts) > 0:
+                start = starts[0]
+            else:
+                break
+
+
+        # GET ALL PATHS FROM THIS STARTING POINT
+        path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
+        starts.remove(start)    # Remove kmer to not visit again
+        
+        # SEARCH PATH
+        if len(path_set) > 0:
+            k_size = len(path_set[0][0])
+            new_sets = []
+            for path in path_set:
+                n = 1
+                while True:
+                    last_kmer = path[-n]
+                    #print('\t\t\tlast: ',last_kmer)
+                    if len(last_kmer) < k_size:
+                        n = n + 1
+                    else:
+                        break
+                if get_rc:
+                    krc = get_reverse_complement(last_kmer)
+                    if krc in G.nodes:
+                        new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
+                        for n in new_set:
+                            new_sets.append(n)
+                        if krc in starts:
+                            starts.remove(krc)
+                    else:
+                        continue
+                
+            if get_rc:
+                for n in new_sets:
+                    path_set.append(n)
+            
+            # Add another start sequence for same path set
+            foundNewStart = False
+            for s in starts:
+                if hamming_distance(start, s) <= nsnps:
+                    newStart = s
+                    foundNewStart = True
+                    break
+            if foundNewStart:
+                continue
+
+            # CONDENSE PATH TO PROPER K-MER LENGTH
+            cpath_set = []
+            if len(path_set) > 1:
+                for path in path_set:
+                    cpath_set.append(condense_path(path))
+                paths.append(cpath_set)
+
+        # CLEAN UP FOR NEXT ROUND
+        path_set = []
+        visited = set()
+        p = []
+        newStart = None
+    return paths
+def get_alignment(G, paths, k, list_colors, include_mods):
+
+    LOG.info('GET PATH ALIGNMENTS')
+    print('GETTING ALIGNMENT')
+    list_genomes = G.genomes
+
+    myData = {}
+
+    # TRAVERSE PATH SETS - groups of paths that stick together
+    for path_set in paths:
+        tabletrack = []
+        annotable = set()
+
+        set_seq = build_sequence(path_set[0]).upper()
+        myData[set_seq] = {}
+
+        # TRAVERSE INDIVIDUAL PATHS
+        for path in path_set:
+            # Make sure there is more than 1 path per set for comparison
+            if len(path) < 1:
+                print('\tnot enough. continue')
+                continue
+
+            # BUILD INDIVIDUAL SEQUENCE
+            sample_seq = build_sequence(path).upper()
+
+            # CHECK FOR PATH IN ALL GENOME-CONTIGS
+            for color in list_colors:
+                if not has_path(G, path, color):
+                    continue
+                
+                LOG.info(f'\t\t\t{color} HAS PATH')
+                genome = color.split(':')[0]
+                chrom = color.split(':')[1]
+                
+                track = set()
+                mods = []
+                anno = []
+                info = {}
+                count = 0
+                position = []
+
+                # GATHER INFORMATION ON PATH IN GENOME-CONTIG
+                # STEP THROUGH PATH BY K-MER
+                for kmer in path:
+                    seen = set()
+                    for card in G.cards[kmer]:
+                        if card.color != color:
+                            continue
+                        position.append(card.start)
+                        for feat in card.features:
+                            fid = feat.id
+                            code = fid
+                            track.add(code)
+                            seen.add(code)
+
+                            # HANDLE MATCHES THAT START PART WAY THROUGH
+                            if fid not in info:
+                                info[fid] = [[],[],[], []]
+                                info[fid][0] = feat.kstart
+                                info[fid][1] = feat.name
+                                info[fid][2] = feat
+                                # Pad LHS
+                                for i in range(0, count):
+                                    loc = k*'0'
+                                    info[fid][3].append(loc)
+                                if feat.category == 'mod':
+                                    mods.append(fid)
+                                else:
+                                    anno.append(fid)
+
+                            if feat.category == 'mod':
+                                loc = decode_loc(feat.location, feat.type)
+                            else:
+                                loc = decode_loc(feat.location)
+                            info[fid][3].append(loc)
+                    # HANDLE FEATURES NOT SEEN
+                    not_seen = list(track - seen)
+                    # Pad RHS   
+                    for fid in not_seen:
+                        if len(info[fid][3]) < count+1:
+                            info[fid][3].append(k*'0')
+                    count = count + 1
+
+
+                # DETERMINE BEST SEQUENCE DIRECTION
+                strand = orient(set_seq, sample_seq)
+                # TODO: Handle cases where hamming distance is not sufficient
+                if strand is None:
+                    print('\tDropped sequence from set')
+                    continue
+
+                # ORGANIZE POSITIONS
+                ## In case of exact repeats within one contig
+                if len(position) == k:
+                    pars = [position]
+                else:
+                    pars = []
+                    for p in position:
+                        found = False
+                        for i in range(0, len(pars)):
+                            if len(pars[i]) >= (2*k)-1: # separates adjacent repeats. Conserved adjacent mods
+                                continue
+                            if p - pars[i][-1] == 1:
+                                pars[i].append(p)
+                                found = True
+                                break
+                        if not found:
+                            pars.append([p])
+
+                # HANDLE EACH ITERATION OF PATH
+                for p in pars:
+
+                    # GET BASE MODS ASSOCIATED WITH CARDS
+                    m_list, mpos, names, sources = [], [], [], []
+
+                    mod_seq = sample_seq
+                    for m in mods:
+                        # CHECK IF FEATURE EXISTS AT LOCATION
+                        pos = str(info[m][0]+k-1)
+                        if int(pos) not in range(p[0]-1, p[-1]+k):
+                            #print('\t\tNO')
+                            continue
+                        # INTEGRATE BASE MOD INTO SEQUENCE
+                        meta = build_sequence(info[m][3])
+                        mod_seq = integrate_mod(mod_seq, meta)
+                        m_list.append(m)
+                        mpos.append(str(pos))
+                        names.append(str(info[m][1]))
+                        sources.append(str(info[m][2].source))
+                    
+                    # Record mods
+                    ml = ','.join((m_list)) # List of modifications
+                    nl = ','.join((names))  # List of modification names
+                    pl = ','.join((mpos))   # List of modification positions
+                    sl = ','.join((sources))# List of modification sources
+                    mod_info = [ml, nl, pl, sl, mod_seq]
+
+
+                    # GET GENE ANNOTATIONS ASSOCIATED WITH CARDS
+                    annotations = []
+                    for a in anno:
+                        pos = str(info[a][0]+k-1)
+                        if int(pos) not in range(p[0]-1, p[-1]+k):
+                            continue
+
+
+                        # BUILD FEATURE SEQUENCE
+                        meta = build_sequence(info[a][3])
+                        if strand == '-': # Adjust orientation
+                            meta = get_reverse_complement(meta)
+                        
+                        # MAKE ANNOTATION OBJECT
+                        feat = info[a][2]
+                        newAnno = Annotation(feat.name, feat.id, meta, strand, pos, feat.category, feat.source)
+                        annotations.append(newAnno)
+
+                    # ADJUST SEQUENCE
+                    if strand == '-':
+                        sample_seq = get_reverse_complement(sample_seq)
+
+                    entry = [chrom, sample_seq, p[0], strand, mod_info, annotations]
+                    if genome not in myData[set_seq]:
+                        myData[set_seq][genome] = []
+
+                    # ADD RECORD TO myData
+                    myData[set_seq][genome].append(entry)
+                 
+
+    return myData
+def get_vars(args, list_colors, alignments, mode):
+
+    # VARIANT CALL FILE
+    ##chrom, pos, id, ref, alt, qual, filter, info
+    
+    aligner = Align.PairwiseAligner()
+
+    LOG.info('GET VARIANTS')
+    print('\n\nGET VARIANTS')
+    list_genomes = get_genome_list(list_colors)
+    differ = {}
+    counting = 0
+    for path_set in alignments:
+        counting = counting + 1
+        seqs = []
+        records = []
+        data = []
+
+        for genome in alignments[path_set]:
+            if genome not in differ:
+                differ[genome] = {}
+
+            # GATHER GENOME-SEQUENCE-INFO DATA  
+            reads = []  
+            for record in alignments[path_set][genome]:
+                # Extract info
+                chrom   = record[0]
+                pos     = record[2]
+                strand  = record[3]
+                if mode == 'mods' and len(record[4])>0:
+                    rseq = record[4][4] # base mod sequence
+                else:
+                    rseq = record[1]    # nucleotide sequence
+
+                meta = (genome, chrom, str(pos))
+                meta = '_'.join(meta)
+    
+                if chrom not in differ[genome]:
+                    differ[genome][chrom] = {}
+                for g in alignments[path_set]:
+                    if g == genome:
+                        continue
+                    for r in alignments[path_set][g]:
+                        if mode == 'mods' and len(r[4])>0:
+                            sseq = r[4][4]  # base mod sequence
+                        else:
+                            sseq = r[1]     # nucleotide sequence
+                        # COMPARE SEQUENCES
+                        vrs = return_var(args, aligner, rseq, sseq, pos)
+                        for v in vrs:
+                            start = v[0]
+                            v.append(g)
+                            if start not in differ[genome][chrom]:
+                                differ[genome][chrom][start] = []
+                            differ[genome][chrom][start].append(v)
+
+    return differ
+
+
+############################################################
+## Helper Functions for Sequences
+def get_reverse_complement(seq, alphabet='DNA'):
+    ''' Find reverse complement of a given sequence '''
+    rcseq = ''
+    length = len(seq)
+
+    if alphabet == 'DNA':
+        for i in range(length-1, -1, -1):
+            if seq[i].upper() == 'A':
+                rcseq = rcseq + 'T'
+            elif seq[i].upper() == 'T':
+                rcseq = rcseq + 'A'
+            elif seq[i].upper() == 'C':
+                rcseq = rcseq + 'G'
+            elif seq[i].upper() == 'G':
+                rcseq = rcseq + 'C'
+            else:
+                rcseq = rcseq + seq[i]
+    if alphabet == 'pa':
+        for i in range(length-1, -1, -1):
+            if seq[i] == '1':
+                rcseq = rcseq + '1'
+            elif seq[i] == '0':
+                rcseq = rcseq + '0'
+            else:
+                rcseq = rcseq + seq[i]
+
+    return rcseq
+def build_sequence(arr):
+    s = arr[0][:-1]
+    for elem in arr:
+        s = s + elem[-1]
+    return s
+def orient(ref, samp):
+
+    # GET REVC
+    flip = get_reverse_complement(samp)
+
+    # CALCULATE DISTANCE - HAMMING
+    if len(ref) == len(samp):
+        fwd = hamming_distance(ref, samp)
+        rvs = hamming_distance(ref, flip)
+    else:   # CALCULATE DISTANCE - LEVENSHTEIN
+        fwd = lev(ref, samp)
+        rvs = lev(ref, flip)
+
+    # RETURN BEST ORIENTATION
+    if fwd <= rvs:
+        return '+'
+    else:
+        return '-'
+def integrate_mod(seq, meta):
+    ms = ''
+    for i in range(0, len(seq)):
+        if meta[i] == '0':
+            ms = ms + seq[i]
+        elif meta[i] == '-':
+            ms = ms + seq[i]
+        else:
+            ms = ms + meta[i]
+
+    return ms
+def hamming_distance(x, y):
+    '''
+        This function uses a custom scoring scheme
+            Difference cononical base -> +1
+            Unknown base -> +0.5
+            Modified base -> +0.25
+        # TODO
+            C -> m is a C -> 5mC modification so is +0.25
+            G -> m is a G -> C -> 5mc so could be   +1.25
+    '''
+
+    if len(x) != len(y):
+        raise ValueError("Strand lengths are not equal")
+        return None
+
+    noVal = ('n', 'N')
+    mods = ('m', 'h', 'M', 'H')
+    score = 0
+    for chr1, chr2 in zip(x, y):
+        if chr1 == chr2:
+            continue
+        if chr1 in noVal or chr2 in noVal:
+            score = score + 0.5
+        if chr1 in mods or chr2 in mods:
+            score = score + 0.25
+        else:
+            score = score + 1
+    return score
+def get_score_line(alignment):
+    a = alignment.split('\n')
+    scoreStr = ''
+    for line in a:
+        if len(line) < 1:
+            continue
+        if line.startswith('target') or line.startswith('query'):
+            continue
+        scores = line.strip().split(' ')
+        if len(scores) > 1:
+            scoreStr = scoreStr + scores[1]
+
+    return scoreStr
+def find_best_align(args, aln):
+
+    ### SCORING ###
+    ''' 
+    A SNP could be written at two gaps
+        Example:    CCA             CC-A
+                    |.|     OR      |--|
+                    CAA             C-AA
+        SNP calling is more useful so snp_score > 2*gap_score
+    Early termination of alignment (i.e. partial alignment is penalized with +0)
+        Prefer gap over termination so gap_score > 0
+    '''
+    match_score = 20 #args.score_match # 5
+    snp_score = 10 #args.score_snp # 3
+    gap_score = 4 #args.score_gap #1
+    gap_open = -2
+
+    bestAln = None
+    bestScore = 0
+    count = 0
+    score_track = []
+
+    for a in aln:
+        if count > 20: # Only consider the first 10 alignments
+            break
+        count = count +  1
+        scoreStr = get_score_line(str(a))
+        score = 0
+        prev = '|'
+        for l in scoreStr:
+            if l == '|':
+                score = score + match_score
+            elif l == '.':
+                score = score + snp_score
+            else:
+                score = score + gap_score
+                # Penalize gap opening
+                if prev == '|' or prev =='.':
+                    score = score + gap_open
+            prev = l
+
+        # Determine best alignment
+        if score > bestScore:
+            bestScore = score
+            bestAln = a
+        score_track.append(score)
+
+    return bestAln
+def return_var(args, aligner, rseq, sseq, pos):
+
+    # PAIRWISE ALIGNMENT
+    aln = aligner.align(rseq, sseq)
+
+    baln = find_best_align(args, aln)
+
+    ref = baln[0].strip()
+    sub = baln[1].strip()
+
+    # RECORD DIFFERENCES
+    state = 'match'
+    rseq = ''
+    sseq = ''
+    pstart = None
+    istart = None
+    diffs = []
+    prev = ''
+
+    for i in range(0, len(ref)):
+        ### HANDLE INDEL ###
+        if ref[i] == '-' or sub[i] == '-':
+            if state != 'INDEL':
+                # START A NEW INDEL
+                rseq = ref[i-1]
+                sseq = sub[i-1]
+                pstart = pos - 1 # start at base before indel
+                istart = i
+                state = 'INDEL'
+            # CONTINUE FROM INDEL
+            if ref[i] == '-':
+                sseq = sseq + sub[i]
+            else:
+                rseq = rseq + ref[i]
+                pos = pos + 1
+            continue
+
+        # FINISH AN INDEL
+        if state == 'INDEL':
+            pstop = pos - 1
+            record = [pstart, pstop, rseq, sseq, 'INDEL']
+            diffs.append(record)
+
+        ### HANDLE A SNP ###
+        if ref[i] != sub[i]:
+            record = [pos, pos, ref[i], sub[i], 'SNP']
+            diffs.append(record)
+            state = 'SNP'
+        else:
+            state = 'match'
+        pos = pos + 1
+        
+    ### HANDLE END CASES ###
+    # FINISH AN INDEL
+    if state == 'INDEL':
+        pstop = pos - 1
+        record = [pstart, pstop, rseq, sseq, 'INDEL']
+        diffs.append(record)
+    
+    return(diffs)
+def sort_var_records(records):
+    #print('ENTER SORT RECORDS')
+
+    refSNP = {}
+    refIND = {}
+    for record in records:
+        #print(record)
+        pstop  = record[1]
+        refseq = record[2]
+        allele = record[3]
+        genome = record[5]
+        if record[4] == 'SNP':
+            if refseq not in refSNP:
+                refSNP[refseq] = {}
+                refSNP[refseq]['info'] = [record[0], record[1]]
+                refSNP[refseq]['alleles'] = set()
+            if genome not in refSNP[refseq]:
+                refSNP[refseq][genome] = []
+            refSNP[refseq][genome].append(allele)
+            refSNP[refseq]['alleles'].add(allele)
+        if record[4] == 'INDEL':
+            if refseq not in refIND:
+                refIND[refseq] = {}
+                refIND[refseq]['info'] = [record[0], record[1]]
+                refIND[refseq]['alleles'] = set()
+            if genome not in refIND[refseq]:
+                refIND[refseq][genome] = []
+            refIND[refseq][genome].append(allele)
+            refIND[refseq]['alleles'].add(allele)
+
+    return refSNP, refIND
+
 
 ############################################################
 ## Helper Functions for Tasks
@@ -988,6 +1713,329 @@ def get_genome_list(list_colors):
     list_genomes = list(genomes)
     list_genomes.sort()
     return list_genomes
+
+############################################################
+## Helper Functions for Data Export
+def get_vcf_top():
+    '''
+        Constructs and returns all of the content for the vcf header
+    '''
+
+    content =   ["##fileformat=VCFv4.1",
+            f"##fileDate={datetime.today().strftime('%Y%m%d')}",
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">'
+            ]
+    top = '\n'.join(content) + '\n'
+
+    return top
+def export_alignments(args, list_colors, alignments, job):
+    LOG.info('PRINT ALIGNMENT AND TABLE')
+    list_genomes = get_genome_list(list_colors)
+
+    print('\n\nEXPORT ALIGNMENTS')
+
+    # CREATE OUTPUT FILE
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+
+        # Alignment File
+        oname = (args.savename, job, 'alignment.tsv')
+        falign = '_'.join(oname)
+        outf = "/".join((outdir, falign))
+        f1 = open(outf, 'w')
+        header = ('genome', 'contig', 'start position', 'strand', 'sequence', 'feature IDs' , 'feature names', 'feature positions', 'feature source', 'original')
+        header = '\t'.join(header)
+        head = ''.join((header, '\n'))
+        f1.write(head)
+    except:
+        print('ERROR: Could not configure output file for alignment. Skipping...')
+        LOG.error('ERROR: Could not configure output file for alignment. Skipping...')
+        return
+
+
+    for path_set in alignments:
+        head = ('genome', 'contig', 'start position', 'strand', path_set, 'feature IDs' , 'feature names', 'feature positions', 'feature source', 'original')
+        head = '\t'.join(head)
+        header = ('\n', head, '\n')
+        header = ''.join(header)
+        f1.write(header)
+        for genome in alignments[path_set]:
+            for record in alignments[path_set][genome]:
+                # Extract info
+                chrom   = record[0]
+                seq     = record[1]
+                pos     = str(record[2])
+                strand  = record[3]
+                fids    = record[4][0]
+                fnames  = record[4][1]
+                fpos    = record[4][2]
+                sources = record[4][3]
+                mseq    = record[4][4]
+
+                
+                # RECORD SEQUENCE (W/ MODS) ENTRY
+                ### TEMP ####
+                #if anno.strand == '-':
+                # pos on +: keep
+                # revC on -: flip
+                # pos on -: flip
+                # revC on +: 
+                '''
+                if 'revC' not in genome and strand == '-':
+                    oseq = get_reverse_complement(mseq)
+                elif 'revC' in genome and strand == '-':
+                    oseq = get_reverse_complement(mseq)
+                else:
+                    oseq = mseq
+                '''
+
+                if strand == '-':
+                    oseq = get_reverse_complement(mseq)
+                else:
+                    oseq = mseq
+                entry   = (genome, chrom, pos, strand, oseq, fids, fnames, fpos, sources, mseq)
+                entry   = '\t'.join(entry)
+                entry   = ''.join((entry, '\n'))
+                f1.write(entry)
+                for anno in record[5]:
+                    if strand == '-':
+                        omseq = get_reverse_complement(anno.metaseq, 'pa')
+                    else:
+                        omseq = anno.metaseq
+                    entry = (genome, chrom, pos, anno.strand, omseq, anno.fid, anno.name, '', anno.source, anno.metaseq)
+                    entry = '\t'.join(entry)
+                    entry = ''.join((entry, '\n'))
+                    f1.write(entry)
+
+    f1.close()
+def export_mod_table(args, list_colors, alignments, job):
+
+    LOG.info('EXPORT BASE MODIFICATION TABLE')
+    list_genomes = get_genome_list(list_colors)
+    
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+
+        # Table File
+        oname = (args.savename, job, 'table.tsv')
+        ftab = '_'.join(oname)
+        outf = '/'.join((outdir, ftab))
+        cols = ['sequence', 'annotation']
+        for gen in list_genomes:
+            cols.append(gen)
+        f = open(outf, 'w')
+        header = '\t'.join((cols))
+        header = ''.join((header, '\n'))
+        f.write(header)
+    except:
+        print('ERROR: Could not configure output file for table. Skipping...')
+        LOG.error('ERROR: Could not configure output file for table. Skipping...')
+        return
+    
+    for seq in alignments:
+        annotations = set()
+        record = []
+        for g in list_genomes:
+            if g in alignments[seq]:
+                feats = []
+                for item in alignments[seq][g]:
+                    
+                    # FETCH BASE MODIFICATIONS
+                    if len(item[4][1]) > 0:
+                        feats.append(item[4][1])
+                    
+                    # FETCH GENE ANNOTATIONS
+                    for a in item[5]:
+                        annotations.add(a.name)
+
+                # CONSOLIDATE FEATURE NAMES
+                feats = ';'.join(feats)
+                if len(feats) < 1:
+                    feats = '0'
+            else:
+                feats = 'NA'
+            record.append(feats)
+
+        
+        # CONSOLIDATE ANNOTATION NAMES
+        if len(annotations) > 1 and 'hypothetical protein' in annotations:
+            annotations.remove('hypothetical protein')
+        anno = ';'.join(annotations)
+
+        # INSERT SEQUENCE AND ANNOTATIONS AHEAD OF OTHER DATA
+        record.insert(0, anno)
+        record.insert(0, seq)
+
+        entry = '\t'.join(record) + '\n'
+        f.write(entry)
+    
+    f.close()
+def export_sum_table(args, alignments, list_colors, job):
+
+    LOG.info('EXPORT BASE MODIFICATION SUMMARY TABLE')
+    list_genomes = get_genome_list(list_colors)
+    mods = ['5mC', '5hmC']
+
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+
+        # Table File
+        oname = (args.savename, job, 'summary.tsv')
+        ftab = '_'.join(oname)
+        outf = '/'.join((outdir, ftab))
+        f = open(outf, 'w')
+        f.close()
+
+    except:
+        print('ERROR: Could not configure output file for summary. Skipping...')
+        LOG.error('ERROR: Could not configure output file for summary. Skipping...')
+        return
+
+    info = {}
+    for path_set in alignments:
+        alignments[path_set]
+        for g in list_genomes:
+            if g not in info:
+                info[g] = {}
+            if g not in alignments[path_set]:
+                continue
+            for record in alignments[path_set][g]:
+                mods    = record[4][1]
+                if len(mods) == 0:
+                    continue
+                fList = mods.split(",")
+                for feat in fList:
+                    if feat not in info[g]:
+                        info[g][feat] = int(0)
+                    info[g][feat] = info[g][feat] + 1
+
+    # STRUCTURE DATA AS TABLE
+    df = pd.DataFrame.from_dict(info)
+    df = df.fillna(0)       # Fill NaNs with 0
+
+    df.to_csv(outf, sep='\t')
+def export_vcf(args, list_colors, variants, ftype, job):
+    '''
+    VARIANT CALL FILE FORMAT
+        #CHROM
+        POS
+        ID
+        REF
+        ALT
+        QUAL
+        FILTER
+        INFO
+        FORMAT
+
+    '''
+
+    LOG.info('PRINT ALIGNMENT AND TABLE')
+    print('\nEXPORT VARIANTS')
+    list_genomes = get_genome_list(list_colors)
+    g_list = get_genome_list(list_colors)
+
+    alphabet = ['a', 'c', 'g', 't', 'A', 'C', 'G', 'T']
+
+    # CREATE OUTPUT DIRECTORY
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+
+        # Alignment file prefix
+        fpath = "/".join((outdir, job))
+        top = get_vcf_top()
+
+        # Establish suffix
+        suffix = ''.join((ftype, '.vcf'))
+    except:
+        print('ERROR: Could not configure output directory for variant calling. Skipping...')
+        LOG.error('ERROR: Could not configure output directory for variant calling. Skipping...')
+        return
+
+    qual = '.'
+    filt = '.'
+    info = '.'
+
+    for genome in list_genomes:
+        # CUSTOMIZE HEADER
+        head = ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT']
+        for g in g_list:
+            if g == genome:
+                continue
+            head.append(g)
+        header = '\t'.join(head) + '\n'
+
+        # CREATE OUTPUT FILE
+        try:
+            # Variant File
+            oname = '_'.join((fpath, genome))
+            outf = ''.join((oname, suffix))
+            f = open(outf, 'w')
+            f.write(top)
+            f.write(header)
+        except:
+            print(f'ERROR: Could not configure output file for {genome} {job} variants. Skipping...')
+            LOG.error(f'ERROR: Could not configure output file for {genome} {job} variants. Skipping...')
+            continue
+
+        # Check if any vars in variants
+        if genome not in variants:
+            continue
+
+        # LOOP THROUGH CHROMS
+        for chrom in variants[genome]:
+            #print(chrom)
+            for pos in variants[genome][chrom]:
+                records = variants[genome][chrom][pos]
+                refSNP, refIND = sort_var_records(records)
+
+                # FILTER OUTPUT FOR MOD VAR SEARCH
+                if job == 'mod_vars':
+                    searchL = [refSNP]
+                else:
+                    searchL = [refSNP, refIND]
+                
+                # GRAB ALL SNPS (AND INDELS) TO REPORT
+                for refs in searchL:
+                    for refseq in refs:
+                        pstart = str(refs[refseq]['info'][0])
+                        pstop  = refs[refseq]['info'][1]
+                        alleles= list(refs[refseq]['alleles'])
+
+                        # Filter output for mod var search
+                        if job == 'mod_vars' and refseq in alphabet and [x in alphabet for x in alleles]:
+                            continue
+
+                        alts = '|'.join(alleles)
+                        # entry = chrom, pos, ID, ref, alt, qual, filter, info, format, genotypes
+                        entry = [chrom, pstart, '.', refseq, alts, qual, filt, info, 'GT']
+                        
+                        for g in g_list:
+                            if g == genome:
+                                continue
+                            if g not in refs[refseq]:
+                                allele = '.'
+                            else:
+                                aSet = set()
+                                for a in refs[refseq][g]:
+                                    aSet.add(str(alleles.index(a)+1))
+                                aList = list(aSet)
+                                aList.sort()
+                                allele  = '|'.join(aList)
+                            entry.append(allele)
+                        entry = '\t'.join(entry) + '\n'
+                        f.write(entry)
+
+        f.close()
+
+
 
 ############################################################
 ## Primary Functions
@@ -1086,7 +2134,7 @@ def add(args, command):
 
     # GET GRAPH
     nodes, edges, starts = read_graph(args)                 # Read graph file
-    if args.exclude_features:
+    if args.exclude_annotations:
         info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
     else:
         info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
@@ -1164,6 +2212,72 @@ def add(args, command):
     # SAVE GRAPH AND FEATURES
     save_gfa(args, G.edges)         # Save graph
     save_features(args, G.cards)    # Save feature data
+def mod_search(args, command):
+
+    # CONFIGURE
+    configure(args, 'mod_search', command)
+    LOG.info('USING EXISTING OBJECTS:')
+    LOG.info(f'\tGraph: {args.input_graph}')
+    LOG.info(f'\tFeatures: {args.input_features}')
+
+    # GET GRAPH
+    nodes, edges, starts = read_graph(args)                 # Read graph file
+    info, cDict, list_genomes, list_colors = read_feats(args)       # Read features file
+    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)    # Create graph
+
+    # DEDUCE K-MER SIZE
+    k_size = len(G.edges[0][0])+1   
+
+    # FIND KMERS WITH AT LEAST ONE MODIFICATION
+    LOG.info('FIND KMERS WITH MODIFICATIONS....')
+    mod_deck = []
+    ghost_deck = []
+    for kmer in G.cards:
+        foundMod = find_mod(G.cards[kmer])
+        if foundMod:
+            for card in G.cards[kmer]:
+                mod_deck.append(card)
+
+            if args.reverse_complement:
+                krc = get_reverse_complement(kmer)
+                try:
+                    for card in G.cards[krc]:
+                        ghost_deck.append(card)
+                except:
+                    continue
+
+    # MAKE SUBGRAPH FOR MODIFICATIONS
+    LOG.info('MAKE SUBGRAPH....')
+    SG = initialize()
+    SG = add_to_graph(SG, mod_deck)
+    starts = list(SG.starts)
+    if args.reverse_complement:
+        SG = add_to_graph(SG, ghost_deck)
+
+    # SAVE INTERMEDIATE GRAPH AND FEATURES
+    if args.write_intermediates:
+        LOG.info('WRITING INTERMEDIARY FILES....')
+        save_gfa(args, SG.edges, 'mod')         # Save graph
+        save_features(args, SG.cards, 'mod')    # Save feature data
+
+    # FIND PATHS IN SUBGRAPH
+    paths = get_paths(SG, starts, args.reverse_complement)
+
+    
+    # COMPARE SEQUENCES AND FEATURES
+    LOG.info(f'COMPARING MODIFIED SEQUENCES...')
+    alignments = get_alignment(SG, paths, k_size, list_colors, True)
+    
+    # GENERATE ALIGNMENT EXPORTS
+    job = 'mod_vars'
+    LOG.info(f'WRITING OUTPUT for {job}....')
+    export_alignments(args, list_colors, alignments, job)           # pseudo alignment
+    export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
+    export_sum_table(args, alignments, list_colors, job)
+
+    # EVALUATE VARIANTS
+    variants = get_vars(args, list_colors, alignments, 'mods')
+    export_vcf(args, list_colors, variants, '.m', job)              # variants
 
 
 def find_vars(args, command):
@@ -1176,7 +2290,7 @@ def find_vars(args, command):
 
     # GET GRAPH
     nodes, edges, starts = read_graph(args)     # Read graph file
-    if args.exclude_features:
+    if args.exclude_annotations:
         print('exclude')
         info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
     else:
@@ -1210,15 +2324,6 @@ def find_vars(args, command):
     LOG.info(f'WRITING OUTPUT for {job}....')
     export_vcf(args, list_colors, variants, '', job)            # variants
     export_alignments(args, list_colors, alignments, job)       # pseudo alignment
-    
-    # limited meaning for var search
-    export_sum_table(args, alignments, list_colors, job)
-
-    # Does not have much meaning for var search
-    #export_mod_table(args, list_colors, alignments, job)   # table of base modifications
-
-
-
 
 
 
@@ -1291,72 +2396,6 @@ def query(args, command):
     
     print_alignments(args, G, paths, k_size, list_colors, 'query')
 
-def mod_search(args, command):
-
-    # CONFIGURE
-    configure(args, 'mod_search', command)
-    LOG.info('USING EXISTING OBJECTS:')
-    LOG.info(f'\tGraph: {args.input_graph}')
-    LOG.info(f'\tFeatures: {args.input_features}')
-
-    # GET GRAPH
-    nodes, edges, starts = read_graph(args)                 # Read graph file
-    info, cDict, list_genomes, list_colors = read_feats(args)       # Read features file
-    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)    # Create graph
-
-    # DEDUCE K-MER SIZE
-    k_size = len(G.edges[0][0])+1   
-
-    # FIND KMERS WITH AT LEAST ONE MODIFICATION
-    LOG.info('FIND KMERS WITH MODIFICATIONS....')
-    mod_deck = []
-    ghost_deck = []
-    for kmer in G.cards:
-        foundMod = find_mod(G.cards[kmer])
-        if foundMod:
-            for card in G.cards[kmer]:
-                mod_deck.append(card)
-
-            if args.reverse_complement:
-                krc = get_reverse_complement(kmer)
-                try:
-                    for card in G.cards[krc]:
-                        ghost_deck.append(card)
-                except:
-                    continue
-
-    # MAKE SUBGRAPH FOR MODIFICATIONS
-    LOG.info('MAKE SUBGRAPH....')
-    SG = initialize()
-    SG = add_to_graph(SG, mod_deck)
-    starts = list(SG.starts)
-    if args.reverse_complement:
-        SG = add_to_graph(SG, ghost_deck)
-
-    # SAVE INTERMEDIATE GRAPH AND FEATURES
-    if args.write_intermediates:
-        LOG.info('WRITING INTERMEDIARY FILES....')
-        save_gfa(args, SG.edges, 'mod')         # Save graph
-        save_features(args, SG.cards, 'mod')    # Save feature data
-
-    # FIND PATHS IN SUBGRAPH
-    paths = get_paths(SG, starts, args.reverse_complement)
-
-    
-    # COMPARE SEQUENCES AND FEATURES
-    LOG.info(f'COMPARING MODIFIED SEQUENCES...')
-    alignments = get_alignment(SG, paths, k_size, list_colors, True)
-    
-    # GENERATE ALIGNMENT EXPORTS
-    job = 'mod_vars'
-    LOG.info(f'WRITING OUTPUT for {job}....')
-    export_alignments(args, list_colors, alignments, job)           # pseudo alignment
-    export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
-    export_sum_table(args, alignments, list_colors, job)
-
-    # EVALUATE VARIANTS
-    variants = get_vars(args, list_colors, alignments, 'mods')
-    export_vcf(args, list_colors, variants, '.m', job)              # variants
 
 
 
@@ -1607,7 +2646,7 @@ if __name__== "__main__":
     #parser_build.add_argument('-w', '--write_var_graph', default=False, help='Save graph and features after filtering', action='store_true')
 
     # PARSER : ADD
-    parser_add.add_argument('-e', '--exclude_features', default=False, help='Annotation data will not be read from feature file', action='store_true')  
+    parser_add.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
     parser_add.add_argument('-f', '--input_features', help='File containing feature data')
     parser_add.add_argument('-g', '--input_graph', help='File containing graph')
     parser_add.add_argument('-m', '--manifest', help='File specifying location of sequences and corresponding metadata')
@@ -1624,7 +2663,7 @@ if __name__== "__main__":
     parser_mod_search.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
     parser_mod_search.add_argument('-f', '--input_features', help='File containing feature data')
     parser_mod_search.add_argument('-g', '--input_graph', help='File containing graph')
-    parser_mod_search.add_argument('-m', '--mods', help='Modifications to look for', default=['m', 'h'], nargs='+')
+    #parser_mod_search.add_argument('-m', '--mods', help='Modifications to look for', default=['m', 'h'], nargs='+')
     parser_mod_search.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
     parser_mod_search.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_mod_search.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
@@ -1640,7 +2679,7 @@ if __name__== "__main__":
     #parser_find_vars.add_argument('-as', '--score_snp', help='SNP score during alignment', default=5, type=int)
     #parser_find_vars.add_argument('-a', '--alignments', help='Top alignments to assess', default=5, type=int)
     parser_find_vars.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
-    parser_find_vars.add_argument('-e', '--exclude_features', help='Exlude all features (annotations, base modifications, etc.) in variant calling', default=False, action='store_true')
+    parser_find_vars.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
     parser_find_vars.add_argument('-f', '--input_features', help='File containing feature data')
     parser_find_vars.add_argument('-g', '--input_graph', help='File containing graph')
     parser_find_vars.add_argument('-m', '--include_mods', help='Include base modifications in variant calling', default=False, action='store_true')

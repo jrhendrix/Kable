@@ -11,6 +11,7 @@ To address the shortcomings in current analysis tools, I present Kable. Kable ut
 ### Requirements
 * Python v3+
 * BioSeq
+* Levenshtein python package
 
 
 ### Installation
@@ -43,8 +44,35 @@ python kable.py add -g kable_output/kable_graph.gfa -f kable_output/kable_feats.
 ```
 
 ### Find sequence variants
+The find_vars module identifies sequence variants between the genome sequences. This module exports a VCF file for each genome sequence. It also aligns the variable sequences between genomes and shows the location of gene annotations in relation to the variants. 
+
+
+```
+# Basic usage
+python kable.py find_vars -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv
+
+# Search for reverse complement and set maximum search depth to 100
+python kable.py find_vars -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -r -d 100
+
+# Save sub graph and exclude annotaiton data
+python kable.py find_vars -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -w -e
+```
+
 
 ### Find base modifications
+
+The kable mod_search module shows where base modifications occur in relation to gene annotations, summarizes the number and type of modifications in sequences, and counts the number and type of modifications in each genome. 
+
+```
+# Basic usage
+python kable.py mod_search -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv
+
+# Search for reverse complement and set maximum search depth to 100
+python kable.py mod_search -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -r -d 100
+
+# Save sub graph and exclude annotaiton data
+python kable.py mod_search -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -w -e
+```
 
 ### Query for a specific sequence
 

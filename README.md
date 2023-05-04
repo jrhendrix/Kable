@@ -75,6 +75,19 @@ python kable.py mod_search -g kable_output/kable_graph.gfa -f kable_output/kable
 ```
 
 ### Query for a specific sequence
+The Kable query module searches for a provided sequence in the graph and returns a list of which genones and contigs contain the sequence. The module will also export a pseudo alignemnt file that shows the location of genome features such as gene annotations and base modifications in relation to the sequence.
+
+```
+# Basic usage
+python kable.py query -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -q sequence
+
+# Include base modifications in pseudo alignment file
+python kable.py query -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -q sequence -m
+
+# Search for the reverse complement sequence
+python kable.py query -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -q sequence -r
+
+```
 
 ### Find sequence between two points
 

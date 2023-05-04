@@ -1396,6 +1396,26 @@ def get_vars(args, list_colors, alignments, mode):
 
 ############################################################
 ## Helper Functions for Sequences
+def qchop(sequence, k, cyclic=False):
+
+    kmers = []
+    for i in range(0, len(sequence)):
+        kend = i+k-1
+        kmer = sequence[i:i+k].strip()
+
+        length = len(kmer)
+        if length < k:
+            if cyclic:
+                kmer += sequence[:(k-length)]
+                length = len(kmer)
+            else:
+                continue
+
+        if length < 2:
+            continue
+
+        kmers.append(kmer)
+    return kmers
 def get_reverse_complement(seq, alphabet='DNA'):
     ''' Find reverse complement of a given sequence '''
     rcseq = ''
@@ -2277,8 +2297,6 @@ def mod_search(args, command):
     # EVALUATE VARIANTS
     variants = get_vars(args, list_colors, alignments, 'mods')
     export_vcf(args, list_colors, variants, '.m', job)              # variants
-
-
 def find_vars(args, command):
 
     # CONFIGURE
@@ -2290,7 +2308,6 @@ def find_vars(args, command):
     # GET GRAPH
     nodes, edges, starts = read_graph(args)     # Read graph file
     if args.exclude_annotations:
-        print('exclude')
         info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
     else:
         info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
@@ -2331,8 +2348,6 @@ def query(args, command):
         Exact: No variants allowed
         Bubble: TODO 
     '''
-    print('not currently opperational')
-    exit()
 
     # CONFIGURE
     configure(args, 'query', command)
@@ -2342,8 +2357,11 @@ def query(args, command):
 
     # GET GRAPH
     nodes, edges, starts = read_graph(args)     # Read graph file
-    info, list_colors = read_feats(args)        # Read features file
-    G = Graph(nodes, edges, starts, info, list_colors)      # Create graph
+    if args.exclude_annotations:
+        info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
+    else:
+        info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
+    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)# Create graph
 
     # DEDUCE K-MER SIZE
     k_size = len(G.edges[0][0])+1
@@ -2353,7 +2371,7 @@ def query(args, command):
     query = args.query
     kmers = qchop(query, k_size, args.is_circular)
     path_set.append(kmers)
-    if args.reverse:
+    if args.reverse_complement:
         rcquery = get_reverse_complement(query)
         rckmers = qchop(rcquery, k_size, args.is_circular)
         path_set.append(rckmers)
@@ -2393,9 +2411,42 @@ def query(args, command):
     #list_colors = list(colors)
     #list_colors.sort()
     
-    print_alignments(args, G, paths, k_size, list_colors, 'query')
+    # GENERATE EXPORTS
+    job = 'query'
+    #print_alignments(args, G, paths, k_size, list_colors, 'query')
+    alignments = get_alignment(G, paths, k_size, list_colors, args.include_mods)
+    export_alignments(args, list_colors, alignments, job)       # pseudo alignment
+
+    # CREATE OUTPUT REPORT FILE
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+
+        # Summary File
+        oname = (args.savename, job, 'summary.tsv')
+        falign = '_'.join(oname)
+        outf = "/".join((outdir, falign))
+        f1 = open(outf, 'w')
+        header = ('genome', 'contig', 'sequence')
+        header = '\t'.join(header)
+        head = ''.join((header, '\n'))
+        f1.write(head)
+    except:
+        print('ERROR: Could not configure output file for summary. Skipping...')
+        LOG.error('ERROR: Could not configure output file for summary. Skipping...')
+        exit()
 
 
+    for kmer in alignments:
+        for genome in alignments[kmer]:
+            for i in alignments[kmer][genome]:
+                entry = (genome, i[0], query)
+                record = '\t'.join(entry) + '\n'
+                f1.write(record)
+
+
+    f1.close()
 
 
 def bubble_query(args, command):
@@ -2679,9 +2730,9 @@ if __name__== "__main__":
     #parser_find_vars.add_argument('-a', '--alignments', help='Top alignments to assess', default=5, type=int)
     parser_find_vars.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
     parser_find_vars.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
+    parser_find_vars.add_argument('-m', '--include_mods', help='Include base modifications in variant calling', default=False, action='store_true')
     parser_find_vars.add_argument('-f', '--input_features', help='File containing feature data')
     parser_find_vars.add_argument('-g', '--input_graph', help='File containing graph')
-    parser_find_vars.add_argument('-m', '--include_mods', help='Include base modifications in variant calling', default=False, action='store_true')
     parser_find_vars.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
     parser_find_vars.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_find_vars.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
@@ -2692,13 +2743,21 @@ if __name__== "__main__":
 
     # PARSER : QUERY
     parser_query.add_argument('-c', '--is_circular', help='Query sequence is circular', default=False, action='store_true')
+    parser_query.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
+    parser_query.add_argument('-m', '--include_mods', help='Include base modifications in query search', default=False, action='store_true')
     parser_query.add_argument('-f', '--input_features', help='File containing feature data')
     parser_query.add_argument('-g', '--input_graph', help='File containing graph')
     parser_query.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
     parser_query.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_query.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
     parser_query.add_argument('-q', '--query', help='Sequence to search for', required=True)
-    parser_query.add_argument('-r', '--reverse', help='Search for reverse compliment', default=False, action='store_true')
+    parser_query.add_argument('-r', '--reverse_complement', help='Search for reverse compliment', default=False, action='store_true')
+
+
+
+
+
+
 
 
     # PARSER : BUBBLE QUERY

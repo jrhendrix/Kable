@@ -1,12 +1,11 @@
 '''
-MY USAGE
- - Mini set - 
- cd /Users/hendrixj/Dropbox/subDrop/development
- python kable_v0.py build -m toy_mani.tsv -k 5
-
- - Morpho set - 
-cd /Users/hendrixj/Documents/morph/test_kable/inputs_big
-python /Users/hendrixj/Dropbox/subDrop/development/kable_v0.py build -m manifest_all.tsv -k 24 -o out_v13_1
+FILE:   kable.py
+AUTHOR: J.R. Hendrix
+URL:    http://stronglab.org
+        https://github.com/jrhendrix/kable
+DESC:   Builds a colored de Bruijn Graph with associated feature data
+        Identifies sequence variants
+        Compares location of base modifications
 
 KNOWN PROBLEMS
 If k-mer size is too small, search might go in circles

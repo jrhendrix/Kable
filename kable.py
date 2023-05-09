@@ -981,6 +981,42 @@ def dfs(visited, graph, node, d, limit, ps, path=[]):
     path.remove(node) # Remove node from growing path
 
     return ps, path, visited
+def dfs_bubble(visited, graph, node, d, limit, ps, stops, path=[]):
+    
+    # Increment depth counter by 1
+    d = int(d) + 1
+
+    # IF MAX DEPTH REACHED -> go back up
+    if d > limit:
+        print('\tReached max depth')
+        return ps, path, visited
+    path.append(node)
+    visited.add(node)
+
+    # IF REACHED END OF PATH (i.e. sink)-> go back up
+    if len(graph[node]) == 0:
+
+        LOG.info(f'\tReached a sink')
+        entry = list(path)
+        ps.append(entry)
+
+        path.remove(node)
+        return ps, path, visited
+
+    if node in stops:
+        entry = list(path)
+        ps.append(entry)
+        path.remove(node)
+        LOG.info(f'\tReached stop node')
+        return ps, path, visited
+
+    # Continue to next layer
+    for neighbor in graph[node]:
+        if neighbor not in path:
+            ps, path, visited = dfs_bubble(visited, graph, neighbor, 0, limit, ps, stops, path)
+    path.remove(node)
+
+    return ps, path, visited
 def condense_path(path):
 
     e1 = path[0]
@@ -991,6 +1027,8 @@ def condense_path(path):
         e1 = path[i]
 
     return newPath
+
+
 
 
 ############################################################
@@ -1032,7 +1070,6 @@ def has_path(G, path, color):
         return True
     else:
         return False
-
 def get_paths(G, starts, get_rc):
 
     # GET MAX RECURSION DEPTH
@@ -1165,7 +1202,74 @@ def get_paths_inexact(G, get_rc, nsnps):
         p = []
         newStart = None
     return paths
-def get_alignment(G, paths, k, list_colors, include_mods):
+
+def get_paths_bubble(G, get_rc, starts, stops):
+
+    # GET MAX RECURSION DEPTH
+    limit = args.max_depth
+    # CONVERT GRAPH TO DICTIONARY
+    m = map(G.edges)
+
+    # GET REVERSE COMPLEMENT OF STOPS
+    if get_rc:
+        rcStops = []
+        for kmer in starts:
+            rc = get_reverse_complement(kmer)
+            rcStops.append(rc)
+
+    # FIND PATHS FROM EACH START SEQUENCE
+    paths = []
+    started = []
+    while len(starts) > 0:
+        start = starts[0]
+        path_set = []
+
+        # GET ALL PATHS FROM THIS STARTING POINT
+        visited = set()
+        p = []
+        path_set, p, visited = dfs_bubble(visited, m, start, 0, limit, path_set, stops, p)
+        starts.remove(start)
+        started.append(start)
+        
+        # INSERT FUNCTIONALITY
+        k_size = len(path_set[0][0])
+        new_sets = []
+        for path in path_set:
+            n = 1
+            while True:
+                last_kmer = path[-n]
+                if len(last_kmer) < k_size:
+                    n = n + 1
+                else:
+                    break
+            if get_rc:
+
+                krc = get_reverse_complement(last_kmer)
+                if krc in G.nodes and krc not in started:
+                    new_set, p, visited = dfs_bubble(visited, m, krc, 0, limit, [], rcStops, p)
+                    for n in new_set:
+                        new_sets.append(n)
+                    if krc in starts:
+                        starts.remove(krc)
+                    started.append(krc)
+                else:
+                    continue
+            
+        if get_rc:
+            for n in new_sets:
+                path_set.append(n)
+        
+        cpath_set = []
+
+        # CONDENSE PATH TO PROPER K-MER LENGTH
+        for path in path_set:
+            cpath_set.append(condense_path(path))
+        paths.append(cpath_set)
+
+    return paths
+
+
+def get_alignment(G, paths, k, list_colors, include_mods, split=True):
 
     LOG.info('GET PATH ALIGNMENTS')
     print('GETTING ALIGNMENT')
@@ -1259,7 +1363,7 @@ def get_alignment(G, paths, k, list_colors, include_mods):
 
                 # ORGANIZE POSITIONS
                 ## In case of exact repeats within one contig
-                if len(position) == k:
+                if len(position) == k or split == False:
                     pars = [position]
                 else:
                     pars = []
@@ -2527,35 +2631,35 @@ def bubble_query(args, command):
 
 
 
-def primer_search(args, command):
-    print('not currently opperational')
-    exit()
+def in_situ(args, command):
+
 
     # CONFIGURE
-    configure(args, 'primer_search', command)
+    configure(args, 'in_situ', command)
     LOG.info('USING EXISTING OBJECTS:')
     LOG.info(f'\tGraph: {args.input_graph}')
     LOG.info(f'\tFeatures: {args.input_features}')
 
     # GET GRAPH
     nodes, edges, starts = read_graph(args)     # Read graph file
-    info, list_colors = read_feats(args)        # Read features file
-    G = Graph(nodes, edges, starts, info, list_colors)      # Create graph
+    if args.exclude_annotations:
+        info, cDict, list_genomes, list_colors = read_feats(args, False)    # Read features file - exclude features
+    else:
+        info, cDict, list_genomes, list_colors = read_feats(args)           # Read features file
+    G = Graph(nodes, edges, starts, info, list_genomes, list_colors)# Create graph
 
     # DEDUCE K-MER SIZE
     k_size = len(G.edges[0][0])+1
 
-    # CONVERT GRAPH TO DICTIONARY
-    m = map(G.edges)
-
     # HANDLE CASE WEHRE SEARCH SEQUENCE IS TOO SHORT
     if len(args.start_sequence) < k_size or len(args.end_sequence) < k_size:
         LOG.error('Search sequences must be at least the length of the k-mers. Exit.')
-        exit()
+        exit()    
 
     # DIVIDE QUERIES INTO K-MERS
     s_kmers = qchop(args.start_sequence, k_size-1, False)
     e_kmers = qchop(args.end_sequence, k_size-1, False)
+
 
     # Only care about inner sequences.... address later
     starts = []
@@ -2564,40 +2668,60 @@ def primer_search(args, command):
     stops.append(e_kmers[0])
 
     LOG.info(f'Starts: {starts} \nstops: {stops}')
-    print(G.nodes)
 
-    # GET PATHS FOR START-STOP CONSTRAINTS
-    paths = []
-    #max_depth = (3*k_size) + 2             # Set max depth to search (arbitrary)
-    max_depth = 980
-    # Check max depth for given system
-    ## import sys 
-    ##print(sys.getrecursionlimit())
-    LOG.info(f'Max depth: {str(max_depth)}')
-    count = 0
-    for i in range(0, len(starts)):
-        count = count + 1
-        LOG.info(f'SEARCH FOR PATTERN {str(count)}')
-        vertex = starts[i]
-        stop = stops[i]
-        path_set = get_subgraph(m, vertex, stop, max_depth)
-        paths.append(path_set)
-        LOG.info(f'\tPaths so far: {paths}')
+    #paths = get_paths_inexact(RG, args.reverse_complement, args.num_snps)
+    paths = get_paths_bubble(G, args.reverse_complement, starts, stops)
 
 
-    # CONDENSE PATH TO PROPER K-MER LENGTH
-    cpaths = []
-    for path_set in paths:
-        cpath_set = []
-        for path in path_set:
-            cpath_set.append(condense_path(path))
-        cpaths.append(cpath_set)
+    # GENERATE EXPORTS
+    job = 'in_situ'
+    alignments = get_alignment(G, paths, k_size, list_colors, args.include_mods, False)
+    export_alignments(args, list_colors, alignments, job)       # pseudo alignment
 
-    LOG.info(f'Condensed paths: {cpaths}')
 
-    # PRINT RESULTS
-    print_alignments(args, G, cpaths, k_size, list_colors, 'primer')
+    # CREATE OUTPUT SEQUENCE FILE
+    LOG.info(f'EXPORTING ITENTIFIED SEQUENCES')
+    try:
+        outdir = '/'.join((args.output_path, args.output_directory))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
 
+        oname = '_'.join((args.savename, 'in_situ'))
+        oprefix = '/'.join((outdir, oname))
+
+
+        # Sequence File
+        notValid = True
+        count = 0
+        while notValid:
+            if count == 0:
+                fname = oprefix
+            else:
+                fname = '_'.join((oprefix, str(count)))
+            outf = '.'.join((fname, 'fasta'))
+            if os.path.isfile(outf):
+                count = count + 1
+            else:
+                notValid = False
+
+        f1 = open(outf, 'w')
+    except:
+        print('ERROR: Could not configure output file for summary. Skipping...')
+        LOG.error('ERROR: Could not configure output file for summary. Skipping...')
+        exit()
+
+
+
+    for kmer in alignments:
+        for genome in alignments[kmer]:
+            for i in alignments[kmer][genome]:
+                cname = '>' + '_'.join((genome, i[0])) + '\n'
+                f1.write(cname) # write contig name
+
+                seq = i[1] + '\n'
+                f1.write(seq)   # write sequence
+
+    f1.close()
     print('done')
 
 
@@ -2669,14 +2793,14 @@ if __name__== "__main__":
     parser_find_vars = subparsers.add_parser('find_vars')
     parser_find_vars.set_defaults(func=find_vars)
 
-    parser_bubble_q = subparsers.add_parser('bubble_query')
-    parser_bubble_q.set_defaults(func=bubble_query)
+    #parser_bubble_q = subparsers.add_parser('bubble_query')
+    #parser_bubble_q.set_defaults(func=bubble_query)
 
     #parser_stat = subparsers.add_parser('stat')#, parents=[parser])
     #parser_stat.set_defaults(func=stat)
 
-    parser_primer_s = subparsers.add_parser('primer_search')
-    parser_primer_s.set_defaults(func=primer_search)
+    parser_in_situ = subparsers.add_parser('in_situ')
+    parser_in_situ.set_defaults(func=in_situ)
 
 
     ''' 
@@ -2761,6 +2885,7 @@ if __name__== "__main__":
 
 
     # PARSER : BUBBLE QUERY
+    '''
     parser_bubble_q.add_argument('-f', '--input_features', help='File containing feature data')
     parser_bubble_q.add_argument('-g', '--input_graph', help='File containing graph')
     parser_bubble_q.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
@@ -2768,17 +2893,20 @@ if __name__== "__main__":
     parser_bubble_q.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
     parser_bubble_q.add_argument('-q', '--query', help='Sequence to search for', required=True)
     parser_bubble_q.add_argument('-r', '--reverse', help='Search for reverse compliment', default=False, action='store_true')
+    '''
 
-
-    # PARSER : PRIMER SEARCH
-    parser_primer_s.add_argument('-f', '--input_features', help='File containing feature data')
-    parser_primer_s.add_argument('-e', '--end_sequence', help='Sequence to end search', required=True)
-    parser_primer_s.add_argument('-g', '--input_graph', help='File containing graph')
-    parser_primer_s.add_argument('-n', '--savename', help='Name of output file', default='kable_primer', type=str)
-    parser_primer_s.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
-    parser_primer_s.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
-    #parser_primer_s.add_argument('-q', '--query', help='Sequence to search for', required=True)
-    parser_primer_s.add_argument('-s', '--start_sequence', help='Sequence to start search', required=True)
+    # PARSER : in situ
+    parser_in_situ.add_argument('-1', '--start_sequence', help='Sequence to start search', required=True)
+    parser_in_situ.add_argument('-2', '--end_sequence', help='Sequence to end search', required=True)
+    parser_in_situ.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
+    parser_in_situ.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
+    parser_in_situ.add_argument('-f', '--input_features', help='File containing feature data')
+    parser_in_situ.add_argument('-g', '--input_graph', help='File containing graph')
+    parser_in_situ.add_argument('-m', '--include_mods', help='Include base modifications in search', default=False, action='store_true')
+    parser_in_situ.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
+    parser_in_situ.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
+    parser_in_situ.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
+    parser_in_situ.add_argument('-r', '--reverse_complement', help='Search for reverse compliment', default=False, action='store_true')
 
 
     args = parser.parse_args()

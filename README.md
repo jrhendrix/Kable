@@ -90,6 +90,24 @@ python kable.py query -g kable_output/kable_graph.gfa -f kable_output/kable_feat
 ```
 
 ### Find sequence between two points
+The Kable in situ module idenfies and extracts all sequences present between two subsequnces. The sequences are named after the genome and contig they originated from and exported to a new FASTA file. If performing multiple queries, it is highly recommended to set the savename with the -n flag.
+
+NOTE: the length of the search sequences should be the same length of the k-mer size or longer. 
+
+```
+# Basic usage
+python kable.py in_situ -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -1 seq1 -2 seq2
+
+# Define output name
+python kable.py in_situ -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -1 seq1 -2 seq2 -n search1
+
+# Include base modifications in pseudo alignment file
+python kable.py in_situ -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -1 seq1 -2 seq2 -m
+
+# Search for the reverse complement sequence
+python kable.py in_situ -g kable_output/kable_graph.gfa -f kable_output/kable_feats.tsv -1 seq1 -2 seq2 -r
+```
+
 
 ### General usage
 Regardless of the speicific module that is run, Kable will create an output direcotry within the current working directory called kable_output/. All log files and generated output will be placed within this directory and given the prefix kable along with a module dependent suffix. 

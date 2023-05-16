@@ -15,7 +15,11 @@ To address the shortcomings in current analysis tools, I present Kable. Kable ut
 
 
 ### Installation
-Clone this repository and run kable.py
+kable is available on [PyPI](https://pypi.org/project/kable/) and can be installed using pip.
+
+```pip install kable```
+
+OR Clone this repository and run ```python kable.py```
 
 ## Usage
 

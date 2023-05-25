@@ -1839,12 +1839,18 @@ def get_genome_list(list_colors):
 
 ############################################################
 ## Helper Functions for Data Export
-def get_vcf_top():
+def get_vcf_top(job):
     '''
         Constructs and returns all of the content for the vcf header
     '''
 
-    content =   ["##fileformat=VCFv4.1",
+    if job == "mod_vars":
+        content =   ["##fileformat=mVCFv1.0",
+            f"##fileDate={datetime.today().strftime('%Y%m%d')}",
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">'
+            ]
+    else:
+        content =   ["##fileformat=VCFv4.1",
             f"##fileDate={datetime.today().strftime('%Y%m%d')}",
             '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">'
             ]
@@ -2073,7 +2079,7 @@ def export_vcf(args, list_colors, variants, ftype, job):
 
         # Alignment file prefix
         fpath = "/".join((outdir, job))
-        top = get_vcf_top()
+        top = get_vcf_top(job)
 
         # Establish suffix
         suffix = ''.join((ftype, '.vcf'))
@@ -2739,7 +2745,7 @@ def configure(args, prog, command):
     # INITIATE LOG FILE
     LOG.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s')
-    logname = '_'.join(('grapher', prog))
+    logname = '_'.join(('kable_log', prog))
     logname = '.'.join((logname, 'log'))
     LOG_File = BASEDIR.join(logname)
     file_handler = logging.FileHandler(LOG_File)
@@ -2766,8 +2772,6 @@ if __name__== "__main__":
 
     parser = argparse.ArgumentParser(description='program description')
     subparsers = parser.add_subparsers(dest="cmd", help='available actions')
-    #subparsers = parser.add_subparsers(title="build", dest="Build a de bruijn graph", help='available actions')
-    #subparsers = parser.add_subparsers(title="stat", dest="Get basic statistics", help='available actions')
     subparsers.required = True
 
     # PARSER : ROOT
@@ -2793,31 +2797,17 @@ if __name__== "__main__":
     parser_find_vars = subparsers.add_parser('find_vars')
     parser_find_vars.set_defaults(func=find_vars)
 
-    #parser_bubble_q = subparsers.add_parser('bubble_query')
-    #parser_bubble_q.set_defaults(func=bubble_query)
-
-    #parser_stat = subparsers.add_parser('stat')#, parents=[parser])
-    #parser_stat.set_defaults(func=stat)
-
     parser_in_situ = subparsers.add_parser('in_situ')
     parser_in_situ.set_defaults(func=in_situ)
 
-
-    ''' 
-    parser_search = subparsers.add_parser('search')#, parents=[parser])
-    parser_search.set_defaults(func=search)
-    '''
-    #build = subparsers.add_parser('build', help='Build a de bruijn graph', parents=[parent_parser])
-    
+   
     # PARSR : BUILD
     parser_build.add_argument('-k', '--kmer_size', help='Length of kmer', default=23, type=int)
     parser_build.add_argument('-m', '--manifest', help='File specifying location of sequences and corresponding metadata')
     parser_build.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
     parser_build.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_build.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
-    #parser_build.add_argument('-r', '--reverse_complement', default=False, help='Align reverse complement sequences', action='store_true')
-    #parser_build.add_argument('-s', '--offeset_mod', default=False, help='Adjust modification boundaries to not include end position', action='store_true')
-    #parser_build.add_argument('-w', '--write_var_graph', default=False, help='Save graph and features after filtering', action='store_true')
+
 
     # PARSER : ADD
     parser_add.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
@@ -2830,14 +2820,9 @@ if __name__== "__main__":
 
 
     # PARSER : MOD_SEARCH
-    #parser_mod_search.add_argument('-ag', '--score_gap', help='Gap score during alignment', default=1, type=int)
-    #parser_mod_search.add_argument('-am', '--score_match', help='Match score during alignment', default=10, type=int)
-    #parser_mod_search.add_argument('-as', '--score_snp', help='SNP score during alignment', default=5, type=int)
-    #parser_mod_search.add_argument('-a', '--alignments', help='Top alignments to assess', default=5, type=int)
     parser_mod_search.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
     parser_mod_search.add_argument('-f', '--input_features', help='File containing feature data')
     parser_mod_search.add_argument('-g', '--input_graph', help='File containing graph')
-    #parser_mod_search.add_argument('-m', '--mods', help='Modifications to look for', default=['m', 'h'], nargs='+')
     parser_mod_search.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
     parser_mod_search.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_mod_search.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
@@ -2845,13 +2830,7 @@ if __name__== "__main__":
     parser_mod_search.add_argument('-w', '--write_intermediates', default=False, help='Save graph and features after filtering', action='store_true')
 
 
-    # PARSER : MOD_SUM
-
     # PARSER : FIND VARS
-    #parser_find_vars.add_argument('-ag', '--score_gap', help='Gap score during alignment', default=1, type=int)
-    #parser_find_vars.add_argument('-am', '--score_match', help='Match score during alignment', default=10, type=int)
-    #parser_find_vars.add_argument('-as', '--score_snp', help='SNP score during alignment', default=5, type=int)
-    #parser_find_vars.add_argument('-a', '--alignments', help='Top alignments to assess', default=5, type=int)
     parser_find_vars.add_argument('-d', '--max_depth', help='Maximum depth to search for paths', default=900, type=int)
     parser_find_vars.add_argument('-e', '--exclude_annotations', default=False, help='Annotation data will not be read from feature file', action='store_true')  
     parser_find_vars.add_argument('-m', '--include_mods', help='Include base modifications in variant calling', default=False, action='store_true')
@@ -2877,23 +2856,6 @@ if __name__== "__main__":
     parser_query.add_argument('-q', '--query', help='Sequence to search for', required=True)
     parser_query.add_argument('-r', '--reverse_complement', help='Search for reverse compliment', default=False, action='store_true')
 
-
-
-
-
-
-
-
-    # PARSER : BUBBLE QUERY
-    '''
-    parser_bubble_q.add_argument('-f', '--input_features', help='File containing feature data')
-    parser_bubble_q.add_argument('-g', '--input_graph', help='File containing graph')
-    parser_bubble_q.add_argument('-n', '--savename', help='Name of output file', default='kable', type=str)
-    parser_bubble_q.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
-    parser_bubble_q.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
-    parser_bubble_q.add_argument('-q', '--query', help='Sequence to search for', required=True)
-    parser_bubble_q.add_argument('-r', '--reverse', help='Search for reverse compliment', default=False, action='store_true')
-    '''
 
     # PARSER : in situ
     parser_in_situ.add_argument('-1', '--start_sequence', help='Sequence to start search', required=True)

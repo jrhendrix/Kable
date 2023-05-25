@@ -1589,7 +1589,8 @@ def hamming_distance(x, y):
             Modified base -> +0.25
         # TODO
             C -> m is a C -> 5mC modification so is +0.25
-            G -> m is a G -> C -> 5mc so could be   +1.25
+            A -> m is a A -> C -> 5mc so could be   +1.25
+            wait because this could be an assembly error
     '''
 
     if len(x) != len(y):
@@ -1597,7 +1598,7 @@ def hamming_distance(x, y):
         return None
 
     noVal = ('n', 'N')
-    mods = ('m', 'h', 'M', 'H')
+    mods = ('m', 'h', 'f', 'v', 'M', 'H', 'F', 'V', '6')
     score = 0
     for chr1, chr2 in zip(x, y):
         if chr1 == chr2:
@@ -1789,14 +1790,14 @@ def encode_loc(code):
 def decode_loc(c, desc = None):
     code    = c.split('-')
 
+    modAlph = {'5mC': 'm', '5hmC': 'h', '5fC': 'f',
+                '4mC': 'v', '6mA': '6'}
+
     off1    = '0'*int(code[0])      # Leading 0s
     if desc is None:
         char = '1'
     else:
-        if desc == '5mC':
-            char = 'm'
-        elif desc == '5hmC':
-            char = 'h'
+        char = modAlph[desc]
     on      = char*int(code[1])
     off2    = '0'*int(code[2])      # Trailing 0s
 
@@ -2007,7 +2008,7 @@ def export_sum_table(args, alignments, list_colors, job):
 
     LOG.info('EXPORT BASE MODIFICATION SUMMARY TABLE')
     list_genomes = get_genome_list(list_colors)
-    mods = ['5mC', '5hmC']
+    mods = ['5mC', '5hmC', '5fC', '4mC', '6mA']
 
     try:
         outdir = '/'.join((args.output_path, args.output_directory))

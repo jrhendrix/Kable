@@ -33,12 +33,13 @@ LOG = logging.getLogger('log_file')
 class Card:
     ''' kmer from chopped sequence '''
 
-    def __init__(self, seq, genome, contig, color, pos):
+    def __init__(self, seq, genome, contig, color, pos, prev):
         self.seq = seq
         self.genome = genome
         self.contig = contig
         self.color = color
         self.start = pos
+        self.prev = prev
         self.features = []
 
     def add_feature(self, feat):
@@ -453,7 +454,7 @@ def read_vcf(ifile):
 
     f1.close()
     return anno
-def chop(sequence, features, genome, contig, strand='fwd', k=3, cyclic=True):
+def chop(sequence, features, genome, contig, k, strand='fwd', cyclic=True):
     '''
         Divide sequence into k-mers
         Add meta data
@@ -465,6 +466,7 @@ def chop(sequence, features, genome, contig, strand='fwd', k=3, cyclic=True):
 
     kmers = []
     counter = 0
+    prev = 'None'
     for i in range(0, len(sequence)):
         kend = i+k-1
 
@@ -562,11 +564,14 @@ def chop(sequence, features, genome, contig, strand='fwd', k=3, cyclic=True):
         if strand == 'rvs':
             kmer = get_reverse_complement(kmer)
         color = ':'.join((genome, contig))
-        kcard = Card(kmer, genome, contig, color, i+1)
+        kcard = Card(kmer, genome, contig, color, i+1, prev)
         if len(feats) > 0:
             for feat in feats:
                 kcard.add_feature(feat)
         kmers.append(kcard)
+
+        # SAVE KMER FOR NEXT ROUND
+        prev = kmer
     return kmers, color
 def save_gfa(args, edges, tag=''):
     ''' Saves dBG in gfa format '''
@@ -686,7 +691,7 @@ def save_features(args, info, tag=''):
                 newFeat = ','.join(newFeat)
                 fs.append(newFeat)
             newFeats = ';'.join((fs))
-            entry = (key, card.genome, card.contig, str(card.start), newFeats)
+            entry = (key, card.genome, card.contig, str(card.start), card.prev, newFeats)
             record = '\t'.join(entry) + '\n'
             f1.write(record)
 
@@ -883,11 +888,13 @@ def read_feats(args, include_feats = True):
         color = ':'.join((genome, contig))
         #print(color)
         pos = int(line[3])
+        print(line)
+        prev = line[4]
 
         # CREATE INFORMATION CARD
-        kcard = Card(kmer, genome, contig, color, pos)
-        if len(line) > 4 and include_feats:
-            feats = line[4].split(';')
+        kcard = Card(kmer, genome, contig, color, pos, prev)
+        if len(line) > 5 and include_feats:
+            feats = line[5].split(';')
             # CREATE FEATURE
             for feat in feats:
                 entry = feat.split(',')
@@ -1058,18 +1065,28 @@ def find_mod(deck):
     return False
 def has_path(G, path, color):
 
+    #if color != 'toy2:seq2':
+    #    return False
+
+    #print('\nenter has path')
+
+    #print(path)
+
     pathFound = True
+    prev = 'None'
+    # ITERATE OVER PATH
     for kmer in path:
         pathFound = False
+        #print(kmer)
         for card in G.cards[kmer]:
-            if card.color == color:
+            if card.color == color and (prev == 'None' or card.prev == prev):
+                #print('\t', card.prev)
                 pathFound = True
+        prev = kmer
         if pathFound == False:
             return False
-    if pathFound:
-        return True
-    else:
-        return False
+    return pathFound
+
 def get_paths(G, starts, get_rc):
 
     # GET MAX RECURSION DEPTH
@@ -1089,6 +1106,8 @@ def get_paths(G, starts, get_rc):
         starts.remove(start)
         
         # INSERT FUNCTIONALITY
+        if len(path_set) < 1:
+            continue
         k_size = len(path_set[0][0])
         new_sets = []
         for path in path_set:
@@ -1269,7 +1288,7 @@ def get_paths_bubble(G, get_rc, starts, stops):
     return paths
 
 
-def get_alignment(G, paths, k, list_colors, include_mods, split=True):
+def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingles=False):
 
     LOG.info('GET PATH ALIGNMENTS')
     print('GETTING ALIGNMENT')
@@ -1288,7 +1307,7 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True):
         # TRAVERSE INDIVIDUAL PATHS
         for path in path_set:
             # Make sure there is more than 1 path per set for comparison
-            if len(path) < 1:
+            if len(path) < 1 and allowSingles == False:
                 print('\tnot enough. continue')
                 continue
 
@@ -1388,12 +1407,19 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True):
                     mod_seq = sample_seq
                     for m in mods:
                         # CHECK IF FEATURE EXISTS AT LOCATION
-                        pos = str(info[m][0]+k-1)
+                        meta = build_sequence(info[m][3])
+                        for i in range(0, len(meta)-1):
+                            if meta[i] != '0':
+                                pos = str(info[m][0]+i)
+                                break
+                        
+                        #pos = str(info[m][0]+k-1)
+                        print(info[m][0], k, pos)
                         if int(pos) not in range(p[0]-1, p[-1]+k):
                             #print('\t\tNO')
                             continue
                         # INTEGRATE BASE MOD INTO SEQUENCE
-                        meta = build_sequence(info[m][3])
+                        #meta = build_sequence(info[m][3])
                         mod_seq = integrate_mod(mod_seq, meta)
                         m_list.append(m)
                         mpos.append(str(pos))
@@ -1406,20 +1432,25 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True):
                     pl = ','.join((mpos))   # List of modification positions
                     sl = ','.join((sources))# List of modification sources
                     mod_info = [ml, nl, pl, sl, mod_seq]
+                    #print(mod_info)
 
 
                     # GET GENE ANNOTATIONS ASSOCIATED WITH CARDS
                     annotations = []
                     for a in anno:
-                        pos = str(info[a][0]+k-1)
-                        if int(pos) not in range(p[0]-1, p[-1]+k):
-                            continue
-
-
                         # BUILD FEATURE SEQUENCE
                         meta = build_sequence(info[a][3])
                         if strand == '-': # Adjust orientation
                             meta = get_reverse_complement(meta)
+
+                        for i in range(0, len(meta)-1):
+                            if meta[i] != '0':
+                                pos = str(info[m][0]+i)
+                                break
+
+                        #pos = str(info[a][0]+k-1)
+                        if int(pos) not in range(p[0]-1, p[-1]+k):
+                            continue
                         
                         # MAKE ANNOTATION OBJECT
                         feat = info[a][2]
@@ -1893,6 +1924,8 @@ def export_alignments(args, list_colors, alignments, job):
         f1.write(header)
         for genome in alignments[path_set]:
             for record in alignments[path_set][genome]:
+                if genome == 'toy2':
+                    print(record)
                 # Extract info
                 chrom   = record[0]
                 seq     = record[1]
@@ -2095,6 +2128,7 @@ def export_vcf(args, list_colors, variants, ftype, job):
 
     for genome in list_genomes:
         # CUSTOMIZE HEADER
+        print('\n\nGENOME: ', genome)
         head = ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT']
         for g in g_list:
             if g == genome:
@@ -2121,16 +2155,23 @@ def export_vcf(args, list_colors, variants, ftype, job):
 
         # LOOP THROUGH CHROMS
         for chrom in variants[genome]:
-            #print(chrom)
+            print('\n\t', chrom)
             for pos in variants[genome][chrom]:
                 records = variants[genome][chrom][pos]
+                print('records: ', records)
+                # refSNP: SNPs only; refIND: indels only
                 refSNP, refIND = sort_var_records(records)
+                #print(refSNP, refIND)
 
                 # FILTER OUTPUT FOR MOD VAR SEARCH
-                if job == 'mod_vars':
-                    searchL = [refSNP]
-                else:
-                    searchL = [refSNP, refIND]
+                #if job == 'mod_vars':
+                #    searchL = [refSNP]
+                #else:
+                #    searchL = [refSNP, refIND]
+                searchL = [refSNP, refIND]
+
+
+                #print('searchL: ', searchL)
                 
                 # GRAB ALL SNPS (AND INDELS) TO REPORT
                 for refs in searchL:
@@ -2138,12 +2179,33 @@ def export_vcf(args, list_colors, variants, ftype, job):
                         pstart = str(refs[refseq]['info'][0])
                         pstop  = refs[refseq]['info'][1]
                         alleles= list(refs[refseq]['alleles'])
+                        print('alleles: ', refseq, ' - ', alleles)
+
+                        #noMod = True
+                        
+                        #print(noMod)
 
                         # Filter output for mod var search
-                        if job == 'mod_vars' and refseq in alphabet and [x in alphabet for x in alleles]:
-                            continue
+                        #if job == 'mod_vars' and refseq in alphabet and [x in alphabet for x in alleles]:
+                        #if job == 'mod_vars' and refseq in alphabet and noMod:
+                        if job == 'mod_vars':
+                            noMod = True
+                            for r in refseq:
+                                if r not in alphabet:
+                                    noMod = False
+                                    break
+                            for a in alleles:
+                                print(a)
+                                for b in a:
+                                    if b not in alphabet:
+                                        noMod = False
+                                        break
+                            if noMod:
+                                print('no mods')
+                                continue
 
                         alts = '|'.join(alleles)
+                        print(refseq, alts)
                         # entry = chrom, pos, ID, ref, alt, qual, filter, info, format, genotypes
                         entry = [chrom, pstart, '.', refseq, alts, qual, filt, info, 'GT']
                         
@@ -2238,7 +2300,7 @@ def build(args, command):
 
             # DIVIDE SEQUENCE INTO KMERS - and add annotations
             LOG.info(f'... ... Finding k-mers...')
-            kmers, color = chop(seq[key], annotations, genome, key, strand, k_size, cyclic=False)
+            kmers, color = chop(seq[key], annotations, genome, key, k_size, strand, cyclic=False)
             #print(len(kmers))
             # ADD KMERS TO GRAPH
             LOG.info(f'... ... ... Adding k-mers to graph...')
@@ -2325,7 +2387,7 @@ def add(args, command):
 
             # DIVIDE SEQUENCE INTO KMERS - and add annotations
             LOG.info(f'... ... Finding k-mers...')
-            kmers, color = chop(seq[key], annotations, genome, key, strand, k_size, cyclic=False)
+            kmers, color = chop(seq[key], annotations, genome, key, k_size, strand, cyclic=False)
             #print(len(kmers))
             # ADD KMERS TO GRAPH
             LOG.info(f'... ... ... Adding k-mers to graph...')
@@ -2393,11 +2455,17 @@ def mod_search(args, command):
     # FIND PATHS IN SUBGRAPH
     paths = get_paths(SG, starts, args.reverse_complement)
 
-    
     # COMPARE SEQUENCES AND FEATURES
     LOG.info(f'COMPARING MODIFIED SEQUENCES...')
-    alignments = get_alignment(SG, paths, k_size, list_colors, True)
-    
+    alignments = get_alignment(SG, paths, k_size, list_colors, True, True)
+    print('\n')
+    #print(alignments)
+    for a in alignments:
+        print('\n', a)
+        print(alignments[a])
+    #exit()
+
+
     # GENERATE ALIGNMENT EXPORTS
     job = 'mod_vars'
     LOG.info(f'WRITING OUTPUT for {job}....')
@@ -2407,6 +2475,7 @@ def mod_search(args, command):
 
     # EVALUATE VARIANTS
     variants = get_vars(args, list_colors, alignments, 'mods')
+    #exit()
     export_vcf(args, list_colors, variants, '.m', job)              # variants
 def find_vars(args, command):
 

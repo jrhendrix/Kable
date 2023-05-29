@@ -1136,9 +1136,13 @@ def get_paths(G, starts, get_rc):
             cpath_set.append(condense_path(path))
         paths.append(cpath_set)
 
+
     return paths
 def get_paths_inexact(G, get_rc, nsnps):
     LOG.info('FIND PATHS THROUGH GRAPH...')
+    print('FIND PATHS THROUGH GRAPH...')
+
+    aligner = Align.PairwiseAligner()
     
     # GET LIST OF START SEQUENCES
     starts = list(G.starts)
@@ -1162,16 +1166,19 @@ def get_paths_inexact(G, get_rc, nsnps):
             else:
                 break
 
+        print('\nNEW START')
 
         # GET ALL PATHS FROM THIS STARTING POINT
         path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
         starts.remove(start)    # Remove kmer to not visit again
         
         # SEARCH PATH
-        if len(path_set) > 0:
+        print(path_set)
+        if len(path_set) > 0: # Requires at least one path
             k_size = len(path_set[0][0])
             new_sets = []
             for path in path_set:
+                print('\t', path)
                 n = 1
                 while True:
                     last_kmer = path[-n]
@@ -1182,10 +1189,18 @@ def get_paths_inexact(G, get_rc, nsnps):
                         break
                 if get_rc:
                     krc = get_reverse_complement(last_kmer)
+                    print('\tGet rc: ', last_kmer, krc)
                     if krc in G.nodes:
                         new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
                         for n in new_set:
-                            new_sets.append(n)
+                            print('\t\t', n)
+                            # Check if close enough match
+                            rseq = build_sequence(path)
+                            sseq = build_sequence(n)
+                            aln = aligner.align(rseq, sseq)
+                            baln = find_best_align(args, aln)
+                            if baln is not None:
+                                new_sets.append(n)
                         if krc in starts:
                             starts.remove(krc)
                     else:
@@ -1217,6 +1232,7 @@ def get_paths_inexact(G, get_rc, nsnps):
         visited = set()
         p = []
         newStart = None
+    print('\nEND')
     return paths
 
 def get_paths_bubble(G, get_rc, starts, stops):
@@ -1517,6 +1533,7 @@ def get_vars(args, list_colors, alignments, mode):
                             sseq = r[1]     # nucleotide sequence
                         # COMPARE SEQUENCES
                         vrs = return_var(args, aligner, rseq, sseq, pos)
+
                         print('\t\t\t', vrs)
                         for v in vrs:
                             start = v[0]
@@ -1702,13 +1719,27 @@ def find_best_align(args, aln):
             bestAln = a
         score_track.append(score)
 
+    # DETERMINE IF ALIGNMENT IS GOOD ENOUGH
+    maxScore = 20*len(scoreStr)
+    print(bestAln)
+    print(bestScore, maxScore)
+    if bestScore < maxScore*args.alignment_threshold:
+        print('poor alignment')
+        return None
+    print('good enough')
     return bestAln
 def return_var(args, aligner, rseq, sseq, pos):
 
+    # SET UP DATA STRUCTURE
+    diffs = []
+
     # PAIRWISE ALIGNMENT
     aln = aligner.align(rseq, sseq)
-
     baln = find_best_align(args, aln)
+
+    # HANDLE CASE WHERE ALIGNMENT NOT SUFFICIENT
+    if baln is None:
+        return diffs
 
     ref = baln[0].strip()
     sub = baln[1].strip()
@@ -1719,7 +1750,6 @@ def return_var(args, aligner, rseq, sseq, pos):
     sseq = ''
     pstart = None
     istart = None
-    diffs = []
     prev = ''
 
     for i in range(0, len(ref)):
@@ -1794,6 +1824,7 @@ def sort_var_records(records):
             refIND[refseq]['alleles'].add(allele)
 
     return refSNP, refIND
+#def filter_alignments(alignments):
 
 
 ############################################################
@@ -2464,11 +2495,10 @@ def mod_search(args, command):
     LOG.info(f'COMPARING MODIFIED SEQUENCES...')
     alignments = get_alignment(SG, paths, k_size, list_colors, True, True)
     print('\n')
-    #print(alignments)
     for a in alignments:
         print('\n', a)
         print(alignments[a])
-    #exit()
+    exit()
 
 
     # GENERATE ALIGNMENT EXPORTS
@@ -2518,9 +2548,18 @@ def find_vars(args, command):
     # FIND PATHS THROUGH GRAPH
     paths = get_paths_inexact(RG, args.reverse_complement, args.num_snps)
 
+    for path_set in paths:
+        print(path_set)
+    #exit()
     # COMPARE SEQUENCES AND FEATURES
     LOG.info(f'COMPARING VARIANT SEQUENCES...')
     alignments = get_alignment(RG, paths, k_size, list_colors, args.include_mods)
+    print('\n\n\nPRINTING ALIGNMENTS')
+    for a in alignments:
+        print('\n', a)
+        print(alignments[a])
+    #exit()
+
     variants = get_vars(args, list_colors, alignments, 'snps')
 
     # GENERATE EXPORTS
@@ -2905,6 +2944,7 @@ if __name__== "__main__":
     parser_mod_search.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_mod_search.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
     parser_mod_search.add_argument('-r', '--reverse_complement', default=False, help='Align reverse complement sequences', action='store_true')
+    parser_mod_search.add_argument('-t', '--alignment_threshold', default=0.7, help='Percentage of best score needed to align two sequences')
     parser_mod_search.add_argument('-w', '--write_intermediates', default=False, help='Save graph and features after filtering', action='store_true')
 
 
@@ -2919,6 +2959,7 @@ if __name__== "__main__":
     parser_find_vars.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
     parser_find_vars.add_argument('-r', '--reverse_complement', default=False, help='Align reverse complement sequences', action='store_true')
     parser_find_vars.add_argument('-s', '--num_snps', default=2, help='Number of SNPs to allow', type=int)
+    parser_find_vars.add_argument('-t', '--alignment_threshold', default=0.7, help='Percentage of best score needed to align two sequences', type=float)
     parser_find_vars.add_argument('-w', '--write_intermediates', default=False, help='Save graph and features after filtering', action='store_true')
 
 

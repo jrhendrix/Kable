@@ -888,7 +888,6 @@ def read_feats(args, include_feats = True):
         color = ':'.join((genome, contig))
         #print(color)
         pos = int(line[3])
-        print(line)
         prev = line[4]
 
         # CREATE INFORMATION CARD
@@ -1077,10 +1076,8 @@ def has_path(G, path, color):
     # ITERATE OVER PATH
     for kmer in path:
         pathFound = False
-        #print(kmer)
         for card in G.cards[kmer]:
             if card.color == color and (prev == 'None' or card.prev == prev):
-                #print('\t', card.prev)
                 pathFound = True
         prev = kmer
         if pathFound == False:
@@ -1413,13 +1410,9 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingl
                                 pos = str(info[m][0]+i)
                                 break
                         
-                        #pos = str(info[m][0]+k-1)
-                        print(info[m][0], k, pos)
                         if int(pos) not in range(p[0]-1, p[-1]+k):
-                            #print('\t\tNO')
                             continue
                         # INTEGRATE BASE MOD INTO SEQUENCE
-                        #meta = build_sequence(info[m][3])
                         mod_seq = integrate_mod(mod_seq, meta)
                         m_list.append(m)
                         mpos.append(str(pos))
@@ -1432,8 +1425,6 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingl
                     pl = ','.join((mpos))   # List of modification positions
                     sl = ','.join((sources))# List of modification sources
                     mod_info = [ml, nl, pl, sl, mod_seq]
-                    #print(mod_info)
-
 
                     # GET GENE ANNOTATIONS ASSOCIATED WITH CARDS
                     annotations = []
@@ -1483,22 +1474,28 @@ def get_vars(args, list_colors, alignments, mode):
     differ = {}
     counting = 0
     for path_set in alignments:
+        print('\n', path_set)
         counting = counting + 1
         seqs = []
         records = []
         data = []
 
         for genome in alignments[path_set]:
+            print(genome)
             if genome not in differ:
                 differ[genome] = {}
 
             # GATHER GENOME-SEQUENCE-INFO DATA  
             reads = []  
             for record in alignments[path_set][genome]:
+                # Record: chrom, sample_seq, pos, strand, mod_info, annotations
+                ## mod_info: id, type, position, source, mod seq
+                print('\trecord: ', record)
                 # Extract info
                 chrom   = record[0]
                 pos     = record[2]
                 strand  = record[3]
+                print('\t\t: ', record[4])
                 if mode == 'mods' and len(record[4])>0:
                     rseq = record[4][4] # base mod sequence
                 else:
@@ -1512,6 +1509,7 @@ def get_vars(args, list_colors, alignments, mode):
                 for g in alignments[path_set]:
                     if g == genome:
                         continue
+                    print('\t\t', g)
                     for r in alignments[path_set][g]:
                         if mode == 'mods' and len(r[4])>0:
                             sseq = r[4][4]  # base mod sequence
@@ -1519,12 +1517,15 @@ def get_vars(args, list_colors, alignments, mode):
                             sseq = r[1]     # nucleotide sequence
                         # COMPARE SEQUENCES
                         vrs = return_var(args, aligner, rseq, sseq, pos)
+                        print('\t\t\t', vrs)
                         for v in vrs:
                             start = v[0]
                             v.append(g)
                             if start not in differ[genome][chrom]:
                                 differ[genome][chrom][start] = []
                             differ[genome][chrom][start].append(v)
+
+    #print('\n\n\n')
 
     return differ
 
@@ -1924,8 +1925,8 @@ def export_alignments(args, list_colors, alignments, job):
         f1.write(header)
         for genome in alignments[path_set]:
             for record in alignments[path_set][genome]:
-                if genome == 'toy2':
-                    print(record)
+                #if genome == 'toy2':
+                #    print(record)
                 # Extract info
                 chrom   = record[0]
                 seq     = record[1]
@@ -2116,7 +2117,11 @@ def export_vcf(args, list_colors, variants, ftype, job):
         top = get_vcf_top(job)
 
         # Establish suffix
-        suffix = ''.join((ftype, '.vcf'))
+        if ftype == 'mvcf':
+            suffix = '.mvcf'
+        else:
+            suffix = '.vcf'
+            #suffix = ''.join((ftype, '.vcf'))
     except:
         print('ERROR: Could not configure output directory for variant calling. Skipping...')
         LOG.error('ERROR: Could not configure output directory for variant calling. Skipping...')
@@ -2469,14 +2474,17 @@ def mod_search(args, command):
     # GENERATE ALIGNMENT EXPORTS
     job = 'mod_vars'
     LOG.info(f'WRITING OUTPUT for {job}....')
-    export_alignments(args, list_colors, alignments, job)           # pseudo alignment
-    export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
-    export_sum_table(args, alignments, list_colors, job)
+    #export_alignments(args, list_colors, alignments, job)           # pseudo alignment
+    #export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
+    #export_sum_table(args, alignments, list_colors, job)
 
     # EVALUATE VARIANTS
     variants = get_vars(args, list_colors, alignments, 'mods')
+    for v in variants:
+        print('\n', v)
+        print(variants[v])
     #exit()
-    export_vcf(args, list_colors, variants, '.m', job)              # variants
+    export_vcf(args, list_colors, variants, 'mvcf', job)              # variants
 def find_vars(args, command):
 
     # CONFIGURE

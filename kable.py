@@ -1064,13 +1064,6 @@ def find_mod(deck):
     return False
 def has_path(G, path, color):
 
-    #if color != 'toy2:seq2':
-    #    return False
-
-    #print('\nenter has path')
-
-    #print(path)
-
     pathFound = True
     prev = 'None'
     # ITERATE OVER PATH
@@ -1084,57 +1077,104 @@ def has_path(G, path, color):
             return False
     return pathFound
 
-def get_paths(G, starts, get_rc):
+def has_path_rc(G, path, color):
+
+    pathFound = True
+    prev = 'None'
+    # ITERATE OVER PATH
+    for i in range(0, len(path)-1, -1):
+        #for kmer in path:
+        kmer = path[i]
+        pathFound = False
+        for card in G.cards[kmer]:
+            if card.color == color and (prev == 'None' or card.prev == prev):
+                pathFound = True
+        prev = kmer
+        if pathFound == False:
+            return False
+    return pathFound
+
+def get_paths(G, starts, list_colors, get_rc):
 
     # GET MAX RECURSION DEPTH
     limit = args.max_depth
     # CONVERT GRAPH TO DICTIONARY
     m = map(G.edges)
+    print(starts)
 
     # FIND PATHS FROM EACH START SEQUENCE
     paths = []
     while len(starts) > 0:
+        print('\nNew path set')
         start = starts[0]
         path_set = []
+        
         # GET ALL PATHS FROM THIS STARTING POINT
         visited = set()
         p = []
         path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
         starts.remove(start)
         
-        # INSERT FUNCTIONALITY
+        # IF NO PATHS FOUND - move on
         if len(path_set) < 1:
             continue
+
+        # 
         k_size = len(path_set[0][0])
         new_sets = []
+        cpath_set = [] # Hold condensed path
         for path in path_set:
+            print(path)
             n = 1
-            while True:
-                last_kmer = path[-n]
-                if len(last_kmer) < k_size:
-                    n = n + 1
-                else:
+
+            # CHECK IF PATH EXISTS IN GRAPH
+            pathFound = False
+            cpath = condense_path(path)
+            for c in list_colors:
+                if has_path(G, cpath, c):
+                    pathFound = True
                     break
+            print('\tPath found: ', pathFound)
+            if not pathFound:
+                path_set.remove(path)
+                continue
+
             if get_rc:
+                # GET START FOR REVC SEARCH
+                while True: # Get last full-length k-mer
+                    last_kmer = path[-n]
+                    if len(last_kmer) < k_size:
+                        n = n + 1
+                    else:
+                        break
                 krc = get_reverse_complement(last_kmer)
                 if krc in G.nodes:
                     new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
                     for n in new_set:
+                        print('\tNew: ', n)
+                        # Check if close enough match?
+                        # Check if already exists?
                         new_sets.append(n)
                     if krc in starts:
                         starts.remove(krc)
-                else:
-                    continue
+                #else: # Reverse complement start not present in graph
+                #    continue
             
+            # CONDENSE PATH TO PROPER K-MER LENGTH
+            cpath_set.append(condense_path(path))
+
         if get_rc:
             for n in new_sets:
                 path_set.append(n)
         
-        cpath_set = []
+        #cpath_set = []
         # CONDENSE PATH TO PROPER K-MER LENGTH
-        for path in path_set:
-            cpath_set.append(condense_path(path))
-        paths.append(cpath_set)
+        #for path in path_set:
+        #    cpath_set.append(condense_path(path))
+        if len(cpath_set) > 0:
+            paths.append(cpath_set)
+
+        print(cpath_set)
 
 
     return paths
@@ -1300,6 +1340,19 @@ def get_paths_bubble(G, get_rc, starts, stops):
 
     return paths
 
+'''
+def polish_paths(G, paths, list_colors):
+    all_paths = {}
+
+    for path_set in paths:
+        for p in path_set:
+            pathFound = False
+            for c in list_colors:
+                if has_path(G, p, c): # Check if full path found at least once
+                    pathFound = True
+                    break
+                # Path not present
+'''
 
 def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingles=False):
 
@@ -1330,7 +1383,11 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingl
             # CHECK FOR PATH IN ALL GENOME-CONTIGS
             for color in list_colors:
                 if not has_path(G, path, color):
-                    continue
+                    if args.reverse_complement:
+                        if has_path_rc(G, path, color):
+                            continue
+                    else:
+                        continue
                 
                 LOG.info(f'\t\t\t{color} HAS PATH')
                 genome = color.split(':')[0]
@@ -1506,12 +1563,12 @@ def get_vars(args, list_colors, alignments, mode):
             for record in alignments[path_set][genome]:
                 # Record: chrom, sample_seq, pos, strand, mod_info, annotations
                 ## mod_info: id, type, position, source, mod seq
-                print('\trecord: ', record)
+                #print('\trecord: ', record)
                 # Extract info
                 chrom   = record[0]
                 pos     = record[2]
                 strand  = record[3]
-                print('\t\t: ', record[4])
+                #print('\t\t: ', record[4])
                 if mode == 'mods' and len(record[4])>0:
                     rseq = record[4][4] # base mod sequence
                 else:
@@ -1721,12 +1778,18 @@ def find_best_align(args, aln):
 
     # DETERMINE IF ALIGNMENT IS GOOD ENOUGH
     maxScore = 20*len(scoreStr)
-    print(bestAln)
-    print(bestScore, maxScore)
+
+    #print('\nbest alignment')
+    ref = bestAln[0].strip() # remove
+    sub = bestAln[1].strip() # remove
+    #print(bestAln)
+    #print(ref, sub, bestScore, maxScore)
+    
+
     if bestScore < maxScore*args.alignment_threshold:
-        print('poor alignment')
+        #print('poor alignment')
         return None
-    print('good enough')
+    #print('good enough')
     return bestAln
 def return_var(args, aligner, rseq, sseq, pos):
 
@@ -1736,6 +1799,9 @@ def return_var(args, aligner, rseq, sseq, pos):
     # PAIRWISE ALIGNMENT
     aln = aligner.align(rseq, sseq)
     baln = find_best_align(args, aln)
+
+    #print('\nbest alignment')
+    #print(baln)
 
     # HANDLE CASE WHERE ALIGNMENT NOT SUFFICIENT
     if baln is None:
@@ -2164,7 +2230,7 @@ def export_vcf(args, list_colors, variants, ftype, job):
 
     for genome in list_genomes:
         # CUSTOMIZE HEADER
-        print('\n\nGENOME: ', genome)
+        #print('\n\nGENOME: ', genome)
         head = ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT']
         for g in g_list:
             if g == genome:
@@ -2191,10 +2257,10 @@ def export_vcf(args, list_colors, variants, ftype, job):
 
         # LOOP THROUGH CHROMS
         for chrom in variants[genome]:
-            print('\n\t', chrom)
+            #print('\n\t', chrom)
             for pos in variants[genome][chrom]:
                 records = variants[genome][chrom][pos]
-                print('records: ', records)
+                #print('\trecords: ', records)
                 # refSNP: SNPs only; refIND: indels only
                 refSNP, refIND = sort_var_records(records)
                 #print(refSNP, refIND)
@@ -2215,7 +2281,7 @@ def export_vcf(args, list_colors, variants, ftype, job):
                         pstart = str(refs[refseq]['info'][0])
                         pstop  = refs[refseq]['info'][1]
                         alleles= list(refs[refseq]['alleles'])
-                        print('alleles: ', refseq, ' - ', alleles)
+                        #print('alleles: ', refseq, ' - ', alleles)
 
                         #noMod = True
                         
@@ -2231,20 +2297,20 @@ def export_vcf(args, list_colors, variants, ftype, job):
                                     noMod = False
                                     break
                             for a in alleles:
-                                print(a)
+                                #print(a)
                                 for b in a:
                                     if b not in alphabet:
                                         noMod = False
                                         break
                             if noMod:
-                                print('no mods')
+                                #print('no mods')
                                 continue
 
                         alts = '|'.join(alleles)
-                        print(refseq, alts)
+                        #print(refseq, alts)
                         # entry = chrom, pos, ID, ref, alt, qual, filter, info, format, genotypes
                         entry = [chrom, pstart, '.', refseq, alts, qual, filt, info, 'GT']
-                        
+                        #print(entry)
                         for g in g_list:
                             if g == genome:
                                 continue
@@ -2489,30 +2555,37 @@ def mod_search(args, command):
         save_features(args, SG.cards, 'mod')    # Save feature data
 
     # FIND PATHS IN SUBGRAPH
-    paths = get_paths(SG, starts, args.reverse_complement)
+    paths = get_paths(SG, starts, list_colors, args.reverse_complement)
+    #polish_paths(SG, paths, list_colors)
+
+    print('\n\n printing paths')
+    for p in paths:
+        print('\n')
+        print(p)
+    #exit()
 
     # COMPARE SEQUENCES AND FEATURES
     LOG.info(f'COMPARING MODIFIED SEQUENCES...')
     alignments = get_alignment(SG, paths, k_size, list_colors, True, True)
-    print('\n')
-    for a in alignments:
-        print('\n', a)
-        print(alignments[a])
-    exit()
+    #print('\n')
+    #for a in alignments:
+    #    print('\n', a)
+    #    print(alignments[a])
+    #exit()
 
 
     # GENERATE ALIGNMENT EXPORTS
     job = 'mod_vars'
     LOG.info(f'WRITING OUTPUT for {job}....')
-    #export_alignments(args, list_colors, alignments, job)           # pseudo alignment
-    #export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
-    #export_sum_table(args, alignments, list_colors, job)
+    export_alignments(args, list_colors, alignments, job)           # pseudo alignment
+    export_mod_table(args, list_colors, alignments, 'base_mods')    # table of base modifications
+    export_sum_table(args, alignments, list_colors, job)
 
     # EVALUATE VARIANTS
     variants = get_vars(args, list_colors, alignments, 'mods')
-    for v in variants:
-        print('\n', v)
-        print(variants[v])
+    #for v in variants:
+    #    print('\n', v)
+    #    print(variants[v])
     #exit()
     export_vcf(args, list_colors, variants, 'mvcf', job)              # variants
 def find_vars(args, command):
@@ -2548,18 +2621,9 @@ def find_vars(args, command):
     # FIND PATHS THROUGH GRAPH
     paths = get_paths_inexact(RG, args.reverse_complement, args.num_snps)
 
-    for path_set in paths:
-        print(path_set)
-    #exit()
     # COMPARE SEQUENCES AND FEATURES
     LOG.info(f'COMPARING VARIANT SEQUENCES...')
     alignments = get_alignment(RG, paths, k_size, list_colors, args.include_mods)
-    print('\n\n\nPRINTING ALIGNMENTS')
-    for a in alignments:
-        print('\n', a)
-        print(alignments[a])
-    #exit()
-
     variants = get_vars(args, list_colors, alignments, 'snps')
 
     # GENERATE EXPORTS
@@ -2567,7 +2631,6 @@ def find_vars(args, command):
     LOG.info(f'WRITING OUTPUT for {job}....')
     export_vcf(args, list_colors, variants, '', job)            # variants
     export_alignments(args, list_colors, alignments, job)       # pseudo alignment
-
 
 
 def query(args, command):
@@ -2944,7 +3007,7 @@ if __name__== "__main__":
     parser_mod_search.add_argument('-o', '--output_directory', help='Name of output directory', default='kable_output', type=str)
     parser_mod_search.add_argument('-p', '--output_path', default=cwd, help='Path to output', type=str)
     parser_mod_search.add_argument('-r', '--reverse_complement', default=False, help='Align reverse complement sequences', action='store_true')
-    parser_mod_search.add_argument('-t', '--alignment_threshold', default=0.7, help='Percentage of best score needed to align two sequences')
+    parser_mod_search.add_argument('-t', '--alignment_threshold', default=0.7, help='Percentage of best score needed to align two sequences', type=float)
     parser_mod_search.add_argument('-w', '--write_intermediates', default=False, help='Save graph and features after filtering', action='store_true')
 
 

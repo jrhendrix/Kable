@@ -1248,14 +1248,11 @@ def get_paths_inexact(G, get_rc, nsnps):
             else:
                 break
 
-        #print('\nNEW START')
-
         # GET ALL PATHS FROM THIS STARTING POINT
         path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
         starts.remove(start)    # Remove kmer to not visit again
         
         # SEARCH PATH
-        #print(path_set)
         if len(path_set) > 0: # Requires at least one path
             k_size = len(path_set[0][0])
             new_sets = []
@@ -1280,7 +1277,8 @@ def get_paths_inexact(G, get_rc, nsnps):
                             rseq = build_sequence(path)
                             sseq = build_sequence(n)
                             aln = aligner.align(rseq, sseq)
-                            baln = find_best_align(args, aln)
+                            ldiff = abs(len(rseq) - len(sseq))
+                            baln = find_best_align(args, aln, ldiff)
                             if baln is not None:
                                 new_sets.append(n)
                         if krc in starts:
@@ -1401,6 +1399,7 @@ def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingl
 
         # TRAVERSE INDIVIDUAL PATHS
         for path in path_set:
+            print(path)
             # Make sure there is more than 1 path per set for comparison
             if len(path) < 1 and allowSingles == False:
                 print('\tnot enough. continue')
@@ -1571,12 +1570,12 @@ def get_vars(args, list_colors, alignments, mode):
     aligner = Align.PairwiseAligner()
 
     LOG.info('GET VARIANTS')
-    print('\n\nGET VARIANTS')
+    #print('\n\nGET VARIANTS')
     list_genomes = get_genome_list(list_colors)
     differ = {}
     counting = 0
     for path_set in alignments:
-        #print('\n', path_set)
+        #print('\n\n\n', path_set)
         counting = counting + 1
         seqs = []
         records = []
@@ -1597,7 +1596,7 @@ def get_vars(args, list_colors, alignments, mode):
                 chrom   = record[0]
                 pos     = record[2]
                 strand  = record[3]
-                #print('\t\t: ', record[4])
+                
                 if mode == 'mods' and len(record[4])>0:
                     rseq = record[4][4] # base mod sequence
                 else:
@@ -1618,8 +1617,14 @@ def get_vars(args, list_colors, alignments, mode):
                         else:
                             sseq = r[1]     # nucleotide sequence
                         # COMPARE SEQUENCES
+                        #print('\tbefore', rseq, sseq, pos, r[3])
+                        if strand == '-':
+                            rseq = get_reverse_complement(rseq)
+                        if r[3] == '-':
+                            sseq = get_reverse_complement(sseq)
+                        #print('\tafter', rseq, sseq, pos)
                         vrs = return_var(args, aligner, rseq, sseq, pos)
-
+                        #print('\t', vrs)
                         #print('\t\t\t', vrs)
                         for v in vrs:
                             start = v[0]
@@ -1758,7 +1763,7 @@ def get_score_line(alignment):
             scoreStr = scoreStr + scores[1]
 
     return scoreStr
-def find_best_align(args, aln):
+def find_best_align(args, aln, ldiff):
 
     ### SCORING ###
     ''' 
@@ -1774,6 +1779,7 @@ def find_best_align(args, aln):
     snp_score = 10 #args.score_snp # 3
     gap_score = 4 #args.score_gap #1
     gap_open = -2
+    add_back = match_score - gap_score
 
     bestAln = None
     bestScore = 0
@@ -1781,7 +1787,8 @@ def find_best_align(args, aln):
     score_track = []
 
     for a in aln:
-        if count > 20: # Only consider the first 10 alignments
+
+        if count > 50: # Only consider the first n alignments
             break
         count = count +  1
         scoreStr = get_score_line(str(a))
@@ -1813,8 +1820,11 @@ def find_best_align(args, aln):
     sub = bestAln[1].strip() # remove
     #print(bestAln)
     #print(ref, sub, bestScore, maxScore)
-    
 
+    # MODIFY SCORE BASED ON LENGTH DIFFERENCE
+    bestScore = bestScore + ldiff*add_back
+    
+    #print('\tMax: ', maxScore, 'Best: ', bestScore)
     if bestScore < maxScore*args.alignment_threshold:
         #print('poor alignment')
         return None
@@ -1827,7 +1837,8 @@ def return_var(args, aligner, rseq, sseq, pos):
 
     # PAIRWISE ALIGNMENT
     aln = aligner.align(rseq, sseq)
-    baln = find_best_align(args, aln)
+    ldiff = abs(len(rseq) - len(sseq))
+    baln = find_best_align(args, aln, ldiff)
 
     #print('\nbest alignment')
     #print(baln)
@@ -1869,7 +1880,8 @@ def return_var(args, aligner, rseq, sseq, pos):
         if state == 'INDEL':
             pstop = pos - 1
             record = [pstart, pstop, rseq, sseq, 'INDEL']
-            diffs.append(record)
+            if pstart > 0:
+                diffs.append(record)
 
         ### HANDLE A SNP ###
         if ref[i] != sub[i]:
@@ -1885,7 +1897,8 @@ def return_var(args, aligner, rseq, sseq, pos):
     if state == 'INDEL':
         pstop = pos - 1
         record = [pstart, pstop, rseq, sseq, 'INDEL']
-        diffs.append(record)
+        if pstart > 0:
+                diffs.append(record)
     
     return(diffs)
 def sort_var_records(records):
@@ -1919,7 +1932,6 @@ def sort_var_records(records):
             refIND[refseq]['alleles'].add(allele)
 
     return refSNP, refIND
-#def filter_alignments(alignments):
 
 
 ############################################################
@@ -2596,7 +2608,7 @@ def mod_search(args, command):
     # COMPARE SEQUENCES AND FEATURES
     LOG.info(f'COMPARING MODIFIED SEQUENCES...')
     alignments = get_alignment(SG, paths, k_size, list_colors, True, True)
-    #print('\n')
+    #print('\nPRINTING ALIGNMENTS\n')
     #for a in alignments:
     #    print('\n', a)
     #    print(alignments[a])
@@ -2612,6 +2624,7 @@ def mod_search(args, command):
 
     # EVALUATE VARIANTS
     variants = get_vars(args, list_colors, alignments, 'mods')
+    #print('\nPRINTING VARIANTS\n')
     #for v in variants:
     #    print('\n', v)
     #    print(variants[v])

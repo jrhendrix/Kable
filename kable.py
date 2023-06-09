@@ -1095,49 +1095,48 @@ def has_path_rc(G, path, color):
             return False
     return pathFound
 
-def get_paths(G, starts, list_colors, get_rc):
+
+def get_paths(G, starts, list_colors, k_size, get_rc):
 
     # GET MAX RECURSION DEPTH
     limit = args.max_depth
     # CONVERT GRAPH TO DICTIONARY
     m = map(G.edges)
-    #print('STARTS: ', starts)
+    print('STARTS: ', starts)
 
     # FIND PATHS FROM EACH START SEQUENCE
     paths = []
     visit_full = set()
     while len(starts) > 0:
         
-        print('\nNew path set')
-        print('STARTS: ', starts)
+        #print('\nNew path set')
+        #print('STARTS: ', starts)
         start = starts[0]
         path_set = []
-        print('Strting with: ', start)
+        #print('Strting with: ', start)
         
-        # GET ALL PATHS FROM THIS STARTING POINT
+        # GET ALL PATHS FROM THIS STARTING K-MER
         visited = set()
         p = []
         path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
         starts.remove(start)
         visit_full.update(visited)
-        print('\tSTARTS: ', starts)
+        #print('\tSTARTS: ', starts)
         
         # IF NO PATHS FOUND - move on
         if len(path_set) < 1:
             continue
 
         # 
-        k_size = len(path_set[0][0])
-        new_sets = []
+        #k_size = len(path_set[0][0])
+        #print(k_size)
+        
         cpath_set = [] # Hold condensed path
-        print("num paths: ", len(path_set), path_set)
         count = 0
         
         for path in path_set:
             count = count + 1
-            print('\tpath: ', str(count), path)
             
-
             # CHECK IF PATH EXISTS IN GRAPH
             pathFound = False
             cpath = condense_path(path)
@@ -1147,68 +1146,80 @@ def get_paths(G, starts, list_colors, get_rc):
                     pathFound = True
                     break
             
-            print('\t\tPath found: ', pathFound)
+            #print('\t\tPath found: ', pathFound)
             
             if not pathFound:
-                #print('\tPATHS: ', path_set)
-                #print('remove path: ', path)
-                #path_set.remove(path)
-                #print('\tPATHS: ', path_set)
-                print('\t\tpat not found, continue')
+                #print('\t\tPath NOT found: ', pathFound)
                 continue
                 
-            print('check point')
-            #continue
             # CONDENSE PATH TO PROPER K-MER LENGTH
             cpath_set.append(condense_path(path))
 
-            n = 1
-            if get_rc:
-                # GET START FOR REVC SEARCH
-                while True: # Get last full-length k-mer
-                    last_kmer = path[-n]
-                    if len(last_kmer) < k_size:
-                        n = n + 1
-                    else:
-                        break
-                krc = get_reverse_complement(last_kmer)
-                print('visited: ', visit_full)
-                print('\t\t\ttry: ', krc)
-                if krc in G.nodes and krc not in visit_full:
-                    print('\t\t\tStarting with: ', krc)
-                    new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
-                    for n in new_set:
-                        print('\t\tNew: ', n)
-                        # Check if close enough match?
-                        # Check if already exists?
-                        # CHECK IF PATH EXISTS IN GRAPH
-                        pathFound = False
-                        cn = condense_path(n)
-                        for c in list_colors:
-                            if has_path(G, cn, c):
-                                pathFound = True
-                                break
-                        print('\t\tPath found: ', pathFound)
-                        if not pathFound:
-                            new_set.remove(n)
-                        else:
-                            new_sets.append(n)
-                            cpath_set.append(condense_path(n))
-                    if krc in starts:
-                        starts.remove(krc)
-
-                #else: # Reverse complement start not present in graph
-                #    continue
-            
-            
 
         if len(cpath_set) > 0:
             paths.append(cpath_set)
 
-        print('Condensed paths: ', cpath_set)
+        #print('Condensed paths: ', cpath_set)
 
 
-    return paths
+    # IF NOT CONSDERING REVERSE COMPLEMENT - RETURN
+    if not get_rc:
+        return paths
+
+    print('\n\nlooking into revc')
+    paths_p = []
+    for path_set in paths:
+        print('\n', path_set)
+        cpath_set_p = []
+        new_sets = []
+        for path in path_set:
+            # ADD PATH TO  NEW PATH SET
+            cpath_set_p.append(path)
+
+            print(path)
+            # GET START FOR REVC SEARCH
+            n = 1
+            while True: # Get last full-length k-mer
+                last_kmer = path[-n][1:]
+                if len(last_kmer) < k_size:
+                    n = n + 1
+                else:
+                    break
+            krc = get_reverse_complement(last_kmer)
+
+            #print('visited: ', visit_full)
+            print('\t\t\ttry: ', krc, '(', last_kmer, ')')
+            print('\t\t\t\texists: ', krc in G.nodes)
+            print('\t\t\t\tvisited: ', krc in visit_full)
+
+            # FIND REVC PATHS
+            if krc in G.nodes and krc not in visit_full: # and krc not in starts:
+                print('\t\t\tStarting with: ', krc)
+                new_set, p, visited = dfs(visited, m, krc, 0, limit, [], p)
+                
+                # CHECK THAT EACH PATH EXISTS IN GRAPH
+                for n in new_set:
+                    #print('\t\tNew: ', n)
+                    pathFound = False
+                    cn = condense_path(n)
+                    for c in list_colors:
+                        if has_path(G, cn, c):
+                            pathFound = True
+                            break
+                    #print('\t\tPath found: ', pathFound)
+                    if pathFound:
+                        cpath_set_p.append(cn)
+                    #if not pathFound:
+                    #    new_set.remove(n)
+                    #else:
+                        #new_sets.append(n)
+                        #cpath_set_p.append(cn)
+
+        paths_p.append(cpath_set_p)
+
+    return paths_p
+
+
 def get_paths_inexact(G, get_rc, nsnps):
     LOG.info('FIND PATHS THROUGH GRAPH...')
     print('FIND PATHS THROUGH GRAPH...')
@@ -1237,14 +1248,14 @@ def get_paths_inexact(G, get_rc, nsnps):
             else:
                 break
 
-        print('\nNEW START')
+        #print('\nNEW START')
 
         # GET ALL PATHS FROM THIS STARTING POINT
         path_set, p, visited = dfs(visited, m, start, 0, limit, path_set, p)
         starts.remove(start)    # Remove kmer to not visit again
         
         # SEARCH PATH
-        print(path_set)
+        #print(path_set)
         if len(path_set) > 0: # Requires at least one path
             k_size = len(path_set[0][0])
             new_sets = []
@@ -1371,19 +1382,6 @@ def get_paths_bubble(G, get_rc, starts, stops):
 
     return paths
 
-'''
-def polish_paths(G, paths, list_colors):
-    all_paths = {}
-
-    for path_set in paths:
-        for p in path_set:
-            pathFound = False
-            for c in list_colors:
-                if has_path(G, p, c): # Check if full path found at least once
-                    pathFound = True
-                    break
-                # Path not present
-'''
 
 def get_alignment(G, paths, k, list_colors, include_mods, split=True, allowSingles=False):
 
@@ -2551,7 +2549,7 @@ def mod_search(args, command):
     G = Graph(nodes, edges, starts, info, list_genomes, list_colors)    # Create graph
 
     # DEDUCE K-MER SIZE
-    k_size = len(G.edges[0][0])+1   
+    k_size = len(G.edges[0][0])+1 
 
     # FIND KMERS WITH AT LEAST ONE MODIFICATION
     LOG.info('FIND KMERS WITH MODIFICATIONS....')
@@ -2562,8 +2560,8 @@ def mod_search(args, command):
         if foundMod:
             for card in G.cards[kmer]:
                 mod_deck.append(card)
-
             if args.reverse_complement:
+                # NOTE: Will not work if there is a SNP
                 krc = get_reverse_complement(kmer)
                 try:
                     for card in G.cards[krc]:
@@ -2586,13 +2584,13 @@ def mod_search(args, command):
         save_features(args, SG.cards, 'mod')    # Save feature data
 
     # FIND PATHS IN SUBGRAPH
-    paths = get_paths(SG, starts, list_colors, args.reverse_complement)
+    paths = get_paths(SG, starts, list_colors, k_size-1, args.reverse_complement)
     #polish_paths(SG, paths, list_colors)
 
-    print('\n\n printing paths')
-    for p in paths:
-        print('\n')
-        print(p)
+    #print('\n\n printing paths')
+    #for p in paths:
+    #    print('\n')
+    #    print(p)
     #exit()
 
     # COMPARE SEQUENCES AND FEATURES

@@ -24,7 +24,7 @@ OR Clone this repository and run ```python kable.py```
 ## Usage
 
 ### Build graph
-As input, kable build requires a tab deliminated manifest file. Each line of the manifest file represents one sample and contains a list of files including one FASTA file and any number of feature files in GFF or TSV format that pertain to that sample. The line can also include an optional orientation indicator (‘-‘ or ‘+’). By default, Kable will input the FASTA file in the forward direcotry, but if the orientation indicator is equal to '-', then Kable will input the reverse complement of the sample's sequence. 
+As input, kable build requires a tab deliminated manifest file. Each line of the manifest file represents one sample and contains a list of files including one FASTA file and any number of feature files in GFF or TSV format that pertain to that sample. The line can also include an optional orientation indicator (‘-‘ or ‘+’). By default, Kable will input the FASTA file in the forward orientation, but if the orientation indicator is equal to '-', then Kable will input the reverse complement of the sample's sequence. 
 
 Kable build parses incoming genome sequences using a set k-mer length. By default, Kable uses a k size of 23, but the user can set a specific k-mer length using the ‘-k’ or ‘—kmer_size’ flag. Values as low as 3 are accepted, though the results may not be meaningful depending on the sequence length. If the user specifies a k-mer length below 3, Kable will automatically adjust the k-mer size to 3.
 
